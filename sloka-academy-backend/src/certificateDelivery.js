@@ -14,7 +14,7 @@ function shortError(err) {
  * Generates certificate PDFs and emails them to students, recording the delivery state on the
  * registration (pending → sent | failed, or off when email is not configured).
  */
-function createCertificateDelivery({ config, certRepo, templateRepo, notifier, logger = console }) {
+function createCertificateDelivery({ config, certRepo, templateRepo, notifier, logger = console, background = null }) {
   const inFlight = new Set();
   const enabled = () => Boolean(notifier && notifier.studentEmailEnabled && typeof notifier.sendCertificate === 'function');
 
@@ -36,6 +36,7 @@ function createCertificateDelivery({ config, certRepo, templateRepo, notifier, l
     });
     inFlight.add(job);
     job.then(() => inFlight.delete(job));
+    background?.(job); // some callers respond before the email is sent
     return job;
   }
 

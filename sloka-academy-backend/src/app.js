@@ -49,14 +49,18 @@ const CSP = [
  * `notifier` is optional (tests pass one built with a fake mail transport, or a fake); when given, it
  * must enforce `emailQuota` itself. `sheetsFetch` replaces fetch for Google Sheets calls in tests.
  */
-function createApp({ db, config, notifier, emailQuota, sheetsFetch } = {}) {
+/**
+ * background: receives promises for work that continues after a response has been sent (emails,
+ * Sheets sync). A long-running server can ignore them; serverless.js passes Vercel's waitUntil.
+ */
+function createApp({ db, config, notifier, emailQuota, sheetsFetch, background = null } = {}) {
   if (!db) throw new Error('createApp: db is required');
   if (!config || typeof config.jwtSecret !== 'string' || config.jwtSecret.length < 32) {
     throw new Error('createApp: config.jwtSecret must be at least 32 characters');
   }
   // Every email the server sends counts towards the recipient's daily limit.
   const quota = emailQuota || createEmailQuota(db, { limit: config.emailDailyLimit });
-  notifier = notifier || createNotifier(config, { quota });
+  notifier = notifier || createNotifier(config, { quota, background });
 
   const app = express();
   app.disable('x-powered-by');
@@ -68,9 +72,9 @@ function createApp({ db, config, notifier, emailQuota, sheetsFetch } = {}) {
   const certRepo = createCertificateRepo(db, config);
   const studentRepo = createStudentRepo(db, config);
   const templateRepo = createTemplateRepo(db);
-  const delivery = createCertificateDelivery({ config, certRepo, templateRepo, notifier });
+  const delivery = createCertificateDelivery({ config, certRepo, templateRepo, notifier, background });
   const settings = createSettings(db);
-  const sheetSync = createSheetSync({ db, config, settings, fetchImpl: sheetsFetch });
+  const sheetSync = createSheetSync({ db, config, settings, fetchImpl: sheetsFetch, background });
   const verifications = createProfileVerification({ db, config, notifier, quota });
   app.locals.services = { delivery, sheetSync, studentRepo, templateRepo, certRepo, verifications, quota };
 

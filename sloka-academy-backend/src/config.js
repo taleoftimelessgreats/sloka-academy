@@ -92,7 +92,8 @@ function loadConfig(env = process.env) {
     jwtSecret,
     production: env.NODE_ENV === 'production',
     allowedOrigins: parseOrigins(env.ALLOWED_ORIGINS),
-    trustProxy: parseTrustProxy(env.TRUST_PROXY),
+    // On Vercel every request arrives through its edge (one hop), which sets X-Forwarded-For to the client.
+    trustProxy: parseTrustProxy(env.TRUST_PROXY ?? (env.VERCEL ? '1' : undefined)),
     dashboardUrl,
     // Public base URL of THIS server, used in emailed certificate download links.
     // Defaults to DASHBOARD_URL's origin (same server); set it if students should see a different hostname.
@@ -117,7 +118,8 @@ function loadConfig(env = process.env) {
     googleServiceAccountFile: env.GOOGLE_SERVICE_ACCOUNT_FILE ? path.resolve(PROJECT_ROOT, env.GOOGLE_SERVICE_ACCOUNT_FILE.trim()) : '',
     googleServiceAccountJson: (env.GOOGLE_SERVICE_ACCOUNT_JSON || '').trim(),
     sheetSyncIntervalMs: 60 * 1000, // retry pending rows this often
-    templateMaxBytes: 10 * 1024 * 1024, // uploaded certificate templates
+    // Uploaded certificate templates. Vercel refuses request bodies over 4.5 MB, so keep under that everywhere.
+    templateMaxBytes: 4 * 1024 * 1024,
     // Rate limits (per client IP). Not exposed via env on purpose; tests override these.
     // Students at a college often share ONE public IP, so the success-path limits are generous.
     publicRateLimit: { max: 20, windowMs: 10 * 60 * 1000 }, // enquiry form submissions

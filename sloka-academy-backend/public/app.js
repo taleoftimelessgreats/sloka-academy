@@ -83,7 +83,7 @@
       forbidden: 'You do not have permission to do that.',
       not_found: 'Not found. It may have been deleted.',
       cross_site_request: 'Request blocked. Reload the page and try again.',
-      payload_too_large: 'That file is too large (10 MB at most).',
+      payload_too_large: 'That file is too large (4 MB at most).',
     };
     if (map[code]) return map[code];
     if (err.data && typeof err.data.message === 'string') return err.data.message;

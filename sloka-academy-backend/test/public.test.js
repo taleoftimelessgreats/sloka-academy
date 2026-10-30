@@ -209,6 +209,14 @@ describe('POST /api/public/inquiries', () => {
     assert.equal((await rows()).length, count);
   });
 
+  test('a page served by the API host itself is accepted without being allow-listed', async () => {
+    const count = (await rows()).length;
+    const res = await postPublic(ctx.base, validInquiry(), { Origin: ctx.base });
+    assert.equal(res.status, 201);
+    assert.equal(res.headers.get('access-control-allow-origin'), null);
+    assert.equal((await rows()).length, count + 1);
+  });
+
   test('response never contains the record id', async () => {
     const res = await postPublic(ctx.base, validInquiry());
     const text = await res.text();
