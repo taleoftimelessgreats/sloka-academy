@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { lmsHref, lmsIsExternal, navLinks, preRegisterHref, preRegisterIsExternal } from "@/config/site";
+import { navLinks, preRegisterHref, preRegisterIsExternal } from "@/config/site";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
 import { SmartLink } from "./SmartLink";
@@ -75,14 +75,15 @@ export function SiteHeader() {
         </nav>
 
         <div className="hidden items-center gap-3 lg:flex">
-          <SmartLink
-            href={lmsHref}
-            external={lmsIsExternal}
+          {/* One place for every sign-in: students to the LMS, staff to the admin portal. */}
+          <Link
+            href="/login/"
+            aria-current={isActive(pathname, "/login/") ? "page" : undefined}
             className="btn btn-glass !min-h-[44px] !px-5 !text-[0.84rem]"
           >
             <Icon name="login" size={16} />
-            LMS
-          </SmartLink>
+            Login
+          </Link>
           <SmartLink href={preRegisterHref} external={preRegisterIsExternal} className="btn btn-red !min-h-[44px] !px-5 !text-[0.84rem]">
             Pre-register
           </SmartLink>
@@ -123,10 +124,14 @@ export function SiteHeader() {
               );
             })}
             <li className="border-b border-line">
-              <SmartLink href={lmsHref} external={lmsIsExternal} className="display flex items-center justify-between py-4 text-[1.6rem] text-muted">
-                LMS
-                <Icon name="arrowUpRight" size={22} />
-              </SmartLink>
+              <Link
+                href="/login/"
+                aria-current={isActive(pathname, "/login/") ? "page" : undefined}
+                className={`display flex items-center justify-between py-4 text-[1.6rem] ${isActive(pathname, "/login/") ? "text-text" : "text-muted"}`}
+              >
+                Login
+                <Icon name="login" size={22} />
+              </Link>
             </li>
           </ul>
           <SmartLink href={preRegisterHref} external={preRegisterIsExternal} className="btn btn-red mt-7 w-full">
