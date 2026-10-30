@@ -163,7 +163,7 @@ export default async function DomainPage({ params }: PageProps<"/domains/[id]">)
         </div>
       </PageHeader>
 
-      <div className="wrap grid gap-20 overflow-x-clip py-24 lg:grid-cols-[1fr_400px] lg:py-32">
+      <div className="wrap grid gap-20 overflow-x-clip py-24 lg:grid-cols-[1fr_340px] lg:gap-12 lg:py-32 xl:grid-cols-[1fr_400px] xl:gap-20">
         <div className="min-w-0 space-y-24">
           <Block n="01" title={<>Who it&rsquo;s <Em>for</Em></>}>
             <p className="text-[clamp(1.3rem,1.1rem+0.8vw,1.75rem)] leading-snug text-text/90">{domain.audience}</p>
