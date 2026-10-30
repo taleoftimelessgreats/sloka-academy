@@ -17,7 +17,7 @@ export default function Home() {
       {/* ================================================================ HERO */}
       <section className="noise relative isolate flex min-h-[min(calc(100svh-var(--header-h)),920px)] flex-col overflow-hidden">
         <Image
-          src="images\home-hero.png"
+          src="/images/home-hero.png"
           alt=""
           fill
           priority
