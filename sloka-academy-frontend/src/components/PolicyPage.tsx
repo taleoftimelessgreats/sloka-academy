@@ -12,7 +12,7 @@ export function PolicyPage({ title, updated, children }: { title: string; update
           <ul className="mt-6 space-y-1 text-sm">
             {policyLinks.map((l) => (
               <li key={l.href}>
-                <Link href={l.href} className="block rounded-lg px-3 py-2 text-muted transition-colors hover:bg-white/[0.04] hover:text-text">
+                <Link href={l.href} className="block rounded-lg px-3 py-3 text-muted transition-colors hover:bg-white/[0.04] hover:text-text">
                   {l.label}
                 </Link>
               </li>

@@ -32,9 +32,9 @@ export default function ContactPage() {
           <div className="grid gap-4 self-start">
             <div className="glass p-8">
               <p className="kicker">Call</p>
-              <div className="mt-5 space-y-1">
+              <div className="-mb-2 mt-3">
                 {contact.phones.map((p) => (
-                  <a key={p.href} href={p.href} className="display block text-[1.7rem] transition-colors hover:text-red-hi sm:text-[2.2rem]">
+                  <a key={p.href} href={p.href} className="display block py-2 text-[1.7rem] transition-colors hover:text-red-hi sm:text-[2.2rem]">
                     {p.display}
                   </a>
                 ))}
@@ -43,7 +43,7 @@ export default function ContactPage() {
             </div>
             <div className="glass p-8">
               <p className="kicker">Email</p>
-              <a href={`mailto:${contact.email}`} className="display mt-5 block break-all text-[1.1rem] transition-colors hover:text-red-hi sm:text-[1.9rem]">
+              <a href={`mailto:${contact.email}`} className="display -mb-3.5 mt-1.5 block break-all py-3.5 text-[1.1rem] transition-colors hover:text-red-hi sm:text-[1.9rem]">
                 {contact.email}
               </a>
             </div>

@@ -130,7 +130,7 @@ export default async function DomainPage({ params }: PageProps<"/domains/[id]">)
           <nav aria-label="Breadcrumb" className="text-sm text-muted">
             <ol className="flex flex-wrap gap-2">
               <li>
-                <Link href="/domains/" className="hover:text-text">Domains</Link>
+                <Link href="/domains/" className="-my-3.5 inline-block py-3.5 hover:text-text">Domains</Link>
               </li>
               <li aria-hidden="true" className="text-muted-2">/</li>
               <li aria-current="page" className="text-text">{domain.name}</li>
@@ -250,11 +250,11 @@ export default async function DomainPage({ params }: PageProps<"/domains/[id]">)
 
         <aside className="lg:sticky lg:top-[calc(var(--header-h)+32px)] lg:self-start">
           <PricingCard compact />
-          <div className="mt-6 space-y-1 px-2 text-sm">
-            <a href={enquiryHref} className="flex items-center gap-3 py-1.5 text-muted transition-colors hover:text-text">
+          <div className="mt-4.5 px-2 text-sm">
+            <a href={enquiryHref} className="flex items-center gap-3 py-3 text-muted transition-colors hover:text-text">
               <Icon name="mail" size={17} className="text-red-hi" /> Email about {domain.name}
             </a>
-            <a href={site.contact.phones[0].href} className="flex items-center gap-3 py-1.5 text-muted transition-colors hover:text-text">
+            <a href={site.contact.phones[0].href} className="flex items-center gap-3 py-3 text-muted transition-colors hover:text-text">
               <Icon name="phone" size={17} className="text-red-hi" /> {site.contact.phones[0].display}
             </a>
           </div>

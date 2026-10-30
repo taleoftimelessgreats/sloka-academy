@@ -253,7 +253,7 @@ export default function Home() {
             <SectionIntro kicker="Questions" title={<>Asked <Em>often.</Em></>} />
             <div className="glass mt-10 max-w-sm p-6">
               <p className="text-sm text-muted">Something else on your mind?</p>
-              <a href={site.contact.phones[0].href} className="display mt-2 block text-2xl transition-colors hover:text-red-hi">
+              <a href={site.contact.phones[0].href} className="display -mb-1.5 mt-0.5 block py-1.5 text-2xl transition-colors hover:text-red-hi">
                 {site.contact.phones[0].display}
               </a>
             </div>
