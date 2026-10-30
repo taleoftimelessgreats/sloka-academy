@@ -9,3 +9,6 @@ engineering.webp photo-1581092160562-40aa08e78837
 lab.webp         photo-1532094349884-543bc11b234d
 code.webp        photo-1498050108023-c5249f4df085
 studio.webp      photo-1556761175-5973dc0f32e7
+
+Home page (home-hero.webp, home-mentoring.webp, home-engineering.webp): generated with Higgsfield (GPT Image 2.5), October 2026.
+They show no real people. Lightly toned (slightly less saturation, a little warmth); the hero is darkened so the headline stays readable.

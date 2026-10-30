@@ -3,6 +3,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { feeSaving, formatINR, preRegisterHref, preRegisterIsExternal, site } from "@/config/site";
 import type { Domain } from "@/data/domains";
+import type { Faq } from "@/data/program";
 import { Icon } from "./Icon";
 import { SmartLink } from "./SmartLink";
 
@@ -106,6 +107,16 @@ export function SaveBadge() {
   );
 }
 
+/** Inline fee for fact rows and headers. */
+export function FeeSummary() {
+  return (
+    <span>
+      <strong className="text-red-hi">{formatINR(site.fee.current)}</strong>
+      <span className="strike ml-3 text-sm">{formatINR(site.fee.original)}</span>
+    </span>
+  );
+}
+
 /** Glass pricing panel: ₹14,999 struck through, ₹9,999 highlighted. */
 export function PricingCard({ compact = false }: { compact?: boolean }) {
   return (
@@ -148,6 +159,16 @@ export function PricingCard({ compact = false }: { compact?: boolean }) {
   );
 }
 
+/** The program fee section (anchor #fee). */
+export function FeeSection({ className = "", children }: { className?: string; children: ReactNode }) {
+  return (
+    <section id="fee" className={`section relative overflow-hidden ${className}`}>
+      <div className="grid-lines absolute inset-0" aria-hidden="true" />
+      <div className="wrap relative">{children}</div>
+    </section>
+  );
+}
+
 export function AvailabilityLabel({ availability }: { availability: Domain["availability"] }) {
   const open = availability === "open";
   return (
@@ -183,7 +204,7 @@ export function DomainCard({ domain, headingLevel = "h3", index }: { domain: Dom
   );
 }
 
-export function FaqList({ items }: { items: { q: string; a: ReactNode }[] }) {
+export function FaqList({ items }: { items: Faq[] }) {
   return (
     <div className="space-y-3">
       {items.map((item) => (
@@ -192,7 +213,15 @@ export function FaqList({ items }: { items: { q: string; a: ReactNode }[] }) {
             {item.q}
             <span className="plus text-red-hi" aria-hidden="true" />
           </summary>
-          <div className="-mt-1 max-w-2xl pb-7 leading-relaxed text-muted">{item.a}</div>
+          <div className="-mt-1 max-w-2xl pb-7 leading-relaxed text-muted">
+            {item.a}
+            {item.link && (
+              <Link href={item.link.href} className="link-glow mt-4 flex w-fit">
+                {item.link.label}
+                <Icon name="arrow" size={16} />
+              </Link>
+            )}
+          </div>
         </details>
       ))}
     </div>
@@ -221,7 +250,8 @@ export function ClosingCta({
           <PreRegisterButton />
           <a href={site.contact.phones[0].href} className="btn btn-glass">
             <Icon name="phone" size={17} />
-            {site.contact.phones[0].display}
+            Call admissions
+            <span className="sr-only"> on {site.contact.phones[0].display}</span>
           </a>
         </div>
       </div>

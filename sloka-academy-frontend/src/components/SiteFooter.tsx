@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { lmsHref, lmsIsExternal, navLinks, policyLinks, site } from "@/config/site";
+import { certificateLinks, lmsHref, lmsIsExternal, navLinks, policyLinks, site } from "@/config/site";
 import { STREAMS } from "@/data/streams";
 import { Logo } from "./Logo";
 import { SmartLink } from "./SmartLink";
@@ -9,7 +9,7 @@ function FooterHeading({ children }: { children: React.ReactNode }) {
 }
 
 export function SiteFooter() {
-  const { contact } = site;
+  const { contact, legal } = site;
   const socials = site.social.filter((s) => s.href);
 
   return (
@@ -51,6 +51,13 @@ export function SiteFooter() {
                   LMS
                 </SmartLink>
               </li>
+              {certificateLinks.map((l) => (
+                <li key={l.href}>
+                  <Link href={l.href} className="text-muted transition-colors hover:text-text">
+                    {l.label}
+                  </Link>
+                </li>
+              ))}
             </ul>
           </div>
 
@@ -101,7 +108,19 @@ export function SiteFooter() {
         </p>
 
         <div className="flex flex-col gap-4 border-t border-line py-7 text-xs text-muted-2 md:flex-row md:items-center md:justify-between">
-          <p>© 2026 Sloka Academy. All rights reserved.</p>
+          <div className="space-y-1.5">
+            <p>© 2026 {legal.entityName || site.name}. All rights reserved.</p>
+            {legal.registrations.length > 0 && (
+              <p>
+                {legal.registrations.map((r, i) => (
+                  <span key={r.label}>
+                    {i > 0 && <span aria-hidden="true"> · </span>}
+                    {r.label}: {r.value}
+                  </span>
+                ))}
+              </p>
+            )}
+          </div>
           <ul className="flex flex-wrap gap-x-6 gap-y-2">
             {policyLinks.map((l) => (
               <li key={l.href}>

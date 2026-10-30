@@ -1,15 +1,13 @@
 import Image from "next/image";
 import Link from "next/link";
+import { DomainFinder } from "@/components/DomainFinder";
 import { Icon } from "@/components/Icon";
-import { ClosingCta, DomainCard, Em, FaqList, PricingCard, SectionIntro } from "@/components/ui";
+import { Brochures, Certifications, StudentReviews } from "@/components/Showcase";
+import { ClosingCta, Em, FaqList, FeeSection, PreRegisterButton, PricingCard, SectionIntro } from "@/components/ui";
 import { formatINR, site } from "@/config/site";
-import { CATEGORIES, VISIBLE_DOMAINS, getDomain } from "@/data/domains";
+import { CATEGORIES, VISIBLE_DOMAINS } from "@/data/domains";
 import { FAQS, ROADMAP } from "@/data/program";
 import { STREAMS } from "@/data/streams";
-
-const FEATURED = ["ai-ml", "vlsi", "data-science", "cyber-security", "pharmacovigilance", "full-stack"]
-  .map(getDomain)
-  .filter((d) => d !== undefined);
 
 export default function Home() {
   const marquee = VISIBLE_DOMAINS.map((d) => d.name);
@@ -19,7 +17,7 @@ export default function Home() {
       {/* ================================================================ HERO */}
       <section className="noise relative isolate flex min-h-[min(calc(100svh-var(--header-h)),920px)] flex-col overflow-hidden">
         <Image
-          src="/images/datacenter.webp"
+          src="/images/home-hero.webp"
           alt=""
           fill
           priority
@@ -44,36 +42,34 @@ export default function Home() {
             {VISIBLE_DOMAINS.length} domains. You leave with a certificate, and with work you are proud to show.
           </p>
           <div className="rise rise-4 mt-11 flex flex-col gap-3 sm:flex-row">
-            <Link href="/domains/" className="btn btn-red">
+            <PreRegisterButton />
+            <Link href="/domains/" className="btn btn-glass">
               Explore domains
-              <Icon name="arrow" size={18} />
             </Link>
-            <a href="#fee" className="btn btn-glass">
-              View program fee
-            </a>
           </div>
         </div>
 
         {/* Bottom glass bar */}
         <div className="wrap rise rise-4 pb-10">
-          <div className="glass grid grid-cols-2 divide-line overflow-hidden !rounded-2xl md:grid-cols-4 md:divide-x">
+          {/* 2x2 on phones, one row from md. Borders are set per cell so both layouts get clean dividers. */}
+          <div className="glass grid grid-cols-2 overflow-hidden !rounded-2xl md:grid-cols-4">
             {[
-              ["Duration", "8 weeks"],
-              ["Domains", String(VISIBLE_DOMAINS.length)],
-              ["Streams", String(STREAMS.length)],
-            ].map(([label, value]) => (
-              <div key={label} className="px-6 py-5">
+              ["Duration", "8 weeks", ""],
+              ["Domains", String(VISIBLE_DOMAINS.length), "border-l"],
+              ["Streams", String(STREAMS.length), "border-t md:border-l md:border-t-0"],
+            ].map(([label, value, borders]) => (
+              <div key={label} className={`border-line px-6 py-5 ${borders}`}>
                 <p className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-muted-2">{label}</p>
                 <p className="display mt-2 text-3xl">{value}</p>
               </div>
             ))}
-            <div className="col-span-2 border-t border-line px-6 py-5 md:col-span-1 md:border-t-0">
+            <a href="#fee" className="border-l border-t border-line px-6 py-5 transition-colors hover:bg-white/[0.03] md:border-t-0">
               <p className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-muted-2">Program fee</p>
-              <p className="mt-2 flex items-baseline gap-3">
+              <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <span className="display text-glow text-3xl text-red-hi">{formatINR(site.fee.current)}</span>
                 <span className="strike text-sm">{formatINR(site.fee.original)}</span>
               </p>
-            </div>
+            </a>
           </div>
         </div>
       </section>
@@ -100,22 +96,24 @@ export default function Home() {
         <div className="glow-orb -right-60 top-0 h-[520px] w-[520px] opacity-40" aria-hidden="true" />
         <div className="wrap">
           <p className="kicker">Why this program</p>
-          <p className="reveal mt-10 max-w-5xl text-[clamp(1.7rem,1.1rem+2.4vw,3.2rem)] font-medium leading-[1.2] tracking-[-0.015em] text-muted-2">
+          <p className="reveal mt-10 max-w-5xl text-[clamp(1.7rem,1.1rem+2.4vw,3.2rem)] font-semibold leading-[1.2] tracking-[-0.015em] text-muted-2">
             Most courses stop at theory. <span className="text-text">Ours is built around what you make.</span> One
             domain, learned properly, <span className="text-text">practised under guidance</span> and finished with a
-            project <span className="font-semibold text-red-hi">you can stand behind.</span>
+            project <span className="font-bold text-red-hi">you can stand behind.</span>
           </p>
         </div>
       </section>
 
       {/* =============================================================== BENTO */}
-      <section className="pb-[clamp(5.5rem,4rem+6vw,10rem)]">
+      <section aria-labelledby="program-at-a-glance" className="pb-[clamp(5.5rem,4rem+6vw,10rem)]">
+        {/* The tiles below are h3s; this keeps the outline h1 > h2 > h3 for screen readers. */}
+        <h2 id="program-at-a-glance" className="sr-only">The program at a glance</h2>
         <div className="wrap grid auto-rows-[minmax(220px,auto)] gap-4 md:grid-cols-6">
           {/* Image tile */}
           <div className="reveal photo-cine relative min-h-[420px] overflow-hidden rounded-[var(--radius-lg)] border border-line md:col-span-4 md:row-span-2">
             <Image
-              src="/images/mentoring.webp"
-              alt="A mentor and a learner reviewing code together"
+              src="/images/home-mentoring.webp"
+              alt="Two university students working through a problem together on a laptop"
               fill
               sizes="(min-width: 768px) 66vw, 100vw"
               className="object-cover"
@@ -154,7 +152,7 @@ export default function Home() {
           </div>
 
           <div className="reveal photo-cine relative min-h-[260px] overflow-hidden rounded-[var(--radius-lg)] border border-line md:col-span-2">
-            <Image src="/images/engineering.webp" alt="A learner working on technical drawings" fill sizes="33vw" className="object-cover" />
+            <Image src="/images/home-engineering.webp" alt="A student in safety glasses soldering a circuit board on a robot kit" fill sizes="33vw" className="object-cover" />
             <p className="display absolute bottom-6 left-7 z-10 text-3xl">Engineering</p>
           </div>
 
@@ -173,33 +171,18 @@ export default function Home() {
         <div className="wrap">
           <div className="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
             <SectionIntro kicker="Domains" title={<>Pick your field. <Em>Go deep.</Em></>}>
-              Every domain runs on the same two-month structure. Start with your stream, or browse the full catalogue.
+              Every domain runs on the same two-month structure. Start with your stream, or search all{" "}
+              {VISIBLE_DOMAINS.length} domains.
             </SectionIntro>
             <Link href="/domains/" className="link-glow shrink-0">
-              All {VISIBLE_DOMAINS.length} domains
+              Domain details
               <Icon name="arrow" size={18} />
             </Link>
           </div>
 
-          <nav aria-label="Browse by stream" className="mt-12">
-            <ul className="flex flex-wrap gap-2">
-              {STREAMS.map((s) => (
-                <li key={s.id}>
-                  <Link href={`/domains/?stream=${s.id}`} className="chip inline-flex items-center">
-                    {s.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </nav>
-
-          <ul className="mt-12 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {FEATURED.map((d, i) => (
-              <li key={d.id} className="reveal">
-                <DomainCard domain={d} index={i} />
-              </li>
-            ))}
-          </ul>
+          <div className="mt-12">
+            <DomainFinder />
+          </div>
         </div>
       </section>
 
@@ -246,30 +229,33 @@ export default function Home() {
       </section>
 
       {/* ================================================================= FEE */}
-      <section id="fee" className="section relative overflow-hidden border-t border-line bg-bg-2">
-        <div className="grid-lines absolute inset-0" aria-hidden="true" />
-        <div className="wrap relative">
-          <SectionIntro align="center" kicker="Program fee" title={<>One fee. <Em>Every domain.</Em></>}>
-            Reduced from {formatINR(site.fee.original)} to {formatINR(site.fee.current)} for the complete program,
-            whichever domain you choose.
-          </SectionIntro>
-          <div className="mx-auto mt-16 max-w-3xl">
-            <PricingCard />
-            <p className="mt-6 text-center text-sm text-muted-2">
-              Admissions will explain the pre-registration amount and payment schedule before you pay anything.
-            </p>
-          </div>
+      <FeeSection className="border-t border-line bg-bg-2">
+        <SectionIntro align="center" kicker="Program fee" title={<>One fee. <Em>Every domain.</Em></>}>
+          Reduced from {formatINR(site.fee.original)} to {formatINR(site.fee.current)} for the complete program,
+          whichever domain you choose.
+        </SectionIntro>
+        <div className="mx-auto mt-16 max-w-3xl">
+          <PricingCard />
+          <p className="mt-6 text-center text-sm text-muted-2">
+            Admissions will explain the pre-registration amount and payment schedule before you pay anything.
+          </p>
         </div>
-      </section>
+      </FeeSection>
+
+      {/* ======================================================== PROOF + INFO */}
+      {/* Content lives in src/data/showcase.ts. */}
+      <StudentReviews />
+      <Certifications />
+      <Brochures />
 
       {/* ================================================================= FAQ */}
-      <section className="section">
+      <section className="section border-t border-line">
         <div className="wrap grid gap-14 lg:grid-cols-[1fr_1.5fr] lg:gap-24">
           <div>
             <SectionIntro kicker="Questions" title={<>Asked <Em>often.</Em></>} />
             <div className="glass mt-10 max-w-sm p-6">
               <p className="text-sm text-muted">Something else on your mind?</p>
-              <a href={site.contact.phones[0].href} className="display mt-2 block text-2xl transition-colors hover:text-red-hi">
+              <a href={site.contact.phones[0].href} className="display -mb-1.5 mt-0.5 block py-1.5 text-2xl transition-colors hover:text-red-hi">
                 {site.contact.phones[0].display}
               </a>
             </div>

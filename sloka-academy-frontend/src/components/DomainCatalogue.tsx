@@ -22,15 +22,23 @@ function buildSearch(query: string, stream: StreamId | null) {
   return s ? `?${s}` : "";
 }
 
-function SearchField({ value, onChange }: { value?: string; onChange?: (v: string) => void }) {
+export function SearchField({
+  id = "domain-search",
+  value,
+  onChange,
+}: {
+  id?: string;
+  value?: string;
+  onChange?: (v: string) => void;
+}) {
   return (
     <div className="relative">
-      <label htmlFor="domain-search" className="sr-only">
+      <label htmlFor={id} className="sr-only">
         Search domains
       </label>
       <Icon name="search" size={20} className="pointer-events-none absolute left-6 top-1/2 z-10 -translate-y-1/2 text-muted" />
       <input
-        id="domain-search"
+        id={id}
         type="search"
         value={value}
         onChange={onChange ? (e) => onChange(e.target.value) : undefined}
@@ -81,8 +89,9 @@ export function DomainCatalogue() {
         <SearchField value={query} onChange={(v) => commit(v, stream)} />
       </div>
 
-      <div role="group" aria-label="Filter by stream" className="-mx-5 mt-8 px-5 sm:mx-0 sm:px-0">
-        <div className="no-scrollbar flex gap-2 overflow-x-auto pb-1 sm:flex-wrap sm:overflow-visible">
+      <div role="group" aria-label="Filter by stream" className="mt-8">
+        {/* On phones the row scrolls edge to edge: the scroller bleeds into the page padding. */}
+        <div className="no-scrollbar -mx-5 flex gap-2 overflow-x-auto px-5 pb-1 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
           {STREAMS.map((s) => {
             const active = stream === s.id;
             return (

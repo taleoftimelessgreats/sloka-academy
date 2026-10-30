@@ -20,8 +20,8 @@ export default function RefundPolicyPage() {
 
       <h2>Program fee</h2>
       <p>
-        The {site.programName} fee is {formatINR(site.fee.current)} (reduced from {formatINR(site.fee.original)}),
-        the same for every domain.
+        The {site.programName} fee is {formatINR(site.fee.current)} (reduced from {formatINR(site.fee.original)}), the
+        same for every domain.
       </p>
 
       <h2>Payments</h2>

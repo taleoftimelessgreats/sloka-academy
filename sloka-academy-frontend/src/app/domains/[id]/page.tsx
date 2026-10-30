@@ -3,8 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { ReactNode } from "react";
 import { Icon } from "@/components/Icon";
-import { AvailabilityLabel, ClosingCta, DomainCard, Em, Note, PageHeader, PreRegisterButton, PricingCard } from "@/components/ui";
-import { formatINR, site } from "@/config/site";
+import { AvailabilityLabel, ClosingCta, DomainCard, Em, FeeSummary, Note, PageHeader, PreRegisterButton, PricingCard } from "@/components/ui";
+import { site } from "@/config/site";
 import { DOMAINS, VISIBLE_DOMAINS, getDomain, type Category, type Domain } from "@/data/domains";
 import { streamLabel } from "@/data/streams";
 
@@ -112,13 +112,7 @@ export default async function DomainPage({ params }: PageProps<"/domains/[id]">)
 
   const facts: [string, ReactNode][] = [
     ["Duration", "Two months (8 weeks)"],
-    [
-      "Program fee",
-      <span key="fee">
-        <strong className="text-red-hi">{formatINR(site.fee.current)}</strong>
-        <span className="strike ml-3 text-sm">{formatINR(site.fee.original)}</span>
-      </span>,
-    ],
+    ["Program fee", <FeeSummary key="fee" />],
     ["Learning platform", "Sloka Academy LMS, hosted on Teachmint"],
     ["Completion", "Certificate on meeting the program requirements"],
   ];
@@ -136,7 +130,7 @@ export default async function DomainPage({ params }: PageProps<"/domains/[id]">)
           <nav aria-label="Breadcrumb" className="text-sm text-muted">
             <ol className="flex flex-wrap gap-2">
               <li>
-                <Link href="/domains/" className="hover:text-text">Domains</Link>
+                <Link href="/domains/" className="-my-3.5 inline-block py-3.5 hover:text-text">Domains</Link>
               </li>
               <li aria-hidden="true" className="text-muted-2">/</li>
               <li aria-current="page" className="text-text">{domain.name}</li>
@@ -148,8 +142,7 @@ export default async function DomainPage({ params }: PageProps<"/domains/[id]">)
         <div className="mt-8 flex flex-wrap items-center gap-x-8 gap-y-3">
           <AvailabilityLabel availability={domain.availability} />
           <span className="text-sm text-muted">
-            2 months · <span className="text-text">{formatINR(site.fee.current)}</span>{" "}
-            <span className="strike ml-1">{formatINR(site.fee.original)}</span>
+            2 months · <FeeSummary />
           </span>
         </div>
         <div className="mt-10 flex flex-col gap-3 sm:flex-row">
@@ -170,7 +163,7 @@ export default async function DomainPage({ params }: PageProps<"/domains/[id]">)
         </div>
       </PageHeader>
 
-      <div className="wrap grid gap-20 py-24 lg:grid-cols-[1fr_400px] lg:py-32">
+      <div className="wrap grid gap-20 overflow-x-clip py-24 lg:grid-cols-[1fr_340px] lg:gap-12 lg:py-32 xl:grid-cols-[1fr_400px] xl:gap-20">
         <div className="min-w-0 space-y-24">
           <Block n="01" title={<>Who it&rsquo;s <Em>for</Em></>}>
             <p className="text-[clamp(1.3rem,1.1rem+0.8vw,1.75rem)] leading-snug text-text/90">{domain.audience}</p>
@@ -257,11 +250,11 @@ export default async function DomainPage({ params }: PageProps<"/domains/[id]">)
 
         <aside className="lg:sticky lg:top-[calc(var(--header-h)+32px)] lg:self-start">
           <PricingCard compact />
-          <div className="mt-6 space-y-1 px-2 text-sm">
-            <a href={enquiryHref} className="flex items-center gap-3 py-1.5 text-muted transition-colors hover:text-text">
+          <div className="mt-4.5 px-2 text-sm">
+            <a href={enquiryHref} className="flex items-center gap-3 py-3 text-muted transition-colors hover:text-text">
               <Icon name="mail" size={17} className="text-red-hi" /> Email about {domain.name}
             </a>
-            <a href={site.contact.phones[0].href} className="flex items-center gap-3 py-1.5 text-muted transition-colors hover:text-text">
+            <a href={site.contact.phones[0].href} className="flex items-center gap-3 py-3 text-muted transition-colors hover:text-text">
               <Icon name="phone" size={17} className="text-red-hi" /> {site.contact.phones[0].display}
             </a>
           </div>

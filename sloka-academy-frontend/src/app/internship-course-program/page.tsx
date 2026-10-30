@@ -2,13 +2,13 @@ import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
 import { Icon } from "@/components/Icon";
-import { ClosingCta, Em, FaqList, Note, PageHeader, PreRegisterButton, PricingCard, SectionIntro } from "@/components/ui";
+import { ClosingCta, Em, FaqList, FeeSection, Note, PageHeader, PreRegisterButton, PricingCard, SectionIntro } from "@/components/ui";
 import { formatINR, site } from "@/config/site";
-import { FAQS, ROADMAP } from "@/data/program";
+import { FAQS, ROADMAP, feeSentence } from "@/data/program";
 
 export const metadata: Metadata = {
   title: site.programName,
-  description: `How Sloka Academy's 2-Month Internship Course Program works, what it includes, and the program fee of ${formatINR(site.fee.current)}.`,
+  description: `How Sloka Academy's 2-Month Internship Course Program works and what it includes. ${feeSentence()}`,
   alternates: { canonical: "/internship-course-program/" },
 };
 
@@ -106,25 +106,22 @@ export default function ProgramPage() {
       </section>
 
       {/* Fee */}
-      <section id="fee" className="section relative overflow-hidden">
-        <div className="grid-lines absolute inset-0" aria-hidden="true" />
-        <div className="wrap relative">
-          <SectionIntro align="center" kicker="Program fee" title={<>{formatINR(site.fee.current)}. <Em>All in.</Em></>}>
-            Reduced from {formatINR(site.fee.original)}, and the same for every domain. Admissions will explain the
-            pre-registration amount, the balance and when it is due before you pay anything.
-          </SectionIntro>
-          <div className="mx-auto mt-16 max-w-3xl">
-            <PricingCard />
-            <p className="mt-6 text-center text-sm text-muted-2">
-              See our{" "}
-              <Link href="/refund-policy/" className="text-text underline underline-offset-4">
-                payment and refund policy
-              </Link>
-              .
-            </p>
-          </div>
+      <FeeSection>
+        <SectionIntro align="center" kicker="Program fee" title={<>{formatINR(site.fee.current)}. <Em>All in.</Em></>}>
+          Reduced from {formatINR(site.fee.original)}, and the same for every domain. Admissions will explain the
+          pre-registration amount, the balance and when it is due before you pay anything.
+        </SectionIntro>
+        <div className="mx-auto mt-16 max-w-3xl">
+          <PricingCard />
+          <p className="mt-6 text-center text-sm text-muted-2">
+            See our{" "}
+            <Link href="/refund-policy/" className="text-text underline underline-offset-4">
+              payment and refund policy
+            </Link>
+            .
+          </p>
         </div>
-      </section>
+      </FeeSection>
 
       {/* FAQ */}
       <section className="section border-t border-line bg-bg-2">
