@@ -51,20 +51,21 @@ export default function Home() {
 
         {/* Bottom glass bar */}
         <div className="wrap rise rise-4 pb-10">
-          <div className="glass grid grid-cols-2 divide-line overflow-hidden !rounded-2xl md:grid-cols-4 md:divide-x">
+          {/* 2x2 on phones, one row from md. Borders are set per cell so both layouts get clean dividers. */}
+          <div className="glass grid grid-cols-2 overflow-hidden !rounded-2xl md:grid-cols-4">
             {[
-              ["Duration", "8 weeks"],
-              ["Domains", String(VISIBLE_DOMAINS.length)],
-              ["Streams", String(STREAMS.length)],
-            ].map(([label, value]) => (
-              <div key={label} className="px-6 py-5">
+              ["Duration", "8 weeks", ""],
+              ["Domains", String(VISIBLE_DOMAINS.length), "border-l"],
+              ["Streams", String(STREAMS.length), "border-t md:border-l md:border-t-0"],
+            ].map(([label, value, borders]) => (
+              <div key={label} className={`border-line px-6 py-5 ${borders}`}>
                 <p className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-muted-2">{label}</p>
                 <p className="display mt-2 text-3xl">{value}</p>
               </div>
             ))}
-            <a href="#fee" className="col-span-2 border-t border-line px-6 py-5 transition-colors hover:bg-white/[0.03] md:col-span-1 md:border-t-0">
+            <a href="#fee" className="border-l border-t border-line px-6 py-5 transition-colors hover:bg-white/[0.03] md:border-t-0">
               <p className="text-[0.68rem] font-semibold uppercase tracking-[0.24em] text-muted-2">Program fee</p>
-              <p className="mt-2 flex items-baseline gap-3">
+              <p className="mt-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
                 <span className="display text-glow text-3xl text-red-hi">{formatINR(site.fee.current)}</span>
                 <span className="strike text-sm">{formatINR(site.fee.original)}</span>
               </p>
