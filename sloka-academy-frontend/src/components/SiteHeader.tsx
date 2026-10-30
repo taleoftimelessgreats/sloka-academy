@@ -24,11 +24,23 @@ export function SiteHeader() {
     setOpen(false);
   }
 
+  // While the menu covers the screen, stop the page scrolling behind it. Close it if the
+  // window widens to the desktop layout, where the panel is hidden.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const desktop = window.matchMedia("(min-width: 1024px)");
+    const onWiden = () => desktop.matches && setOpen(false);
+    const root = document.documentElement;
+    const previousOverflow = root.style.overflow;
+    root.style.overflow = "hidden";
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    desktop.addEventListener("change", onWiden);
+    return () => {
+      root.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", onKey);
+      desktop.removeEventListener("change", onWiden);
+    };
   }, [open]);
 
   return (
@@ -88,7 +100,11 @@ export function SiteHeader() {
         </button>
       </div>
 
-      <div id="mobile-menu" hidden={!open} className="border-t border-line lg:hidden">
+      <div
+        id="mobile-menu"
+        hidden={!open}
+        className="h-[calc(100svh-var(--header-h))] overflow-y-auto overscroll-contain border-t border-line lg:hidden"
+      >
         <nav aria-label="Mobile" className="wrap pb-8 pt-3">
           <ul>
             {navLinks.map((link) => {
