@@ -152,7 +152,7 @@ export default function Home() {
           </div>
 
           <div className="reveal photo-cine relative min-h-[260px] overflow-hidden rounded-[var(--radius-lg)] border border-line md:col-span-2">
-            <Image src="/images/home-engineering.webp"alt="A student in safety glasses soldering a circuit board on a robot kit" fill sizes="33vw" className="object-cover" />
+            <Image src="/images/home-engineering.webp" alt="A student in safety glasses soldering a circuit board on a robot kit" fill sizes="33vw" className="object-cover" />
             <p className="display absolute bottom-6 left-7 z-10 text-3xl">Engineering</p>
           </div>
 
