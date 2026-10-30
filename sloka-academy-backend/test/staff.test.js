@@ -342,19 +342,19 @@ describe('staff API', () => {
     assert.deepEqual(blocked.body, { error: 'rate_limited' });
   });
 
-  test('noindex headers, robots.txt and CSP', async () => {
-    for (const path of ['/', '/robots.txt', '/api/auth/me', '/api/public/inquiries']) {
+  test('noindex and CSP headers; only API routes are served', async () => {
+    for (const path of ['/', '/index.html', '/api/auth/me', '/api/public/inquiries']) {
       const res = await fetch(`${ctx.base}${path}`);
       assert.equal(res.headers.get('x-robots-tag'), 'noindex, nofollow', path);
+      const csp = res.headers.get('content-security-policy');
+      assert.match(csp, /default-src 'none'/, path);
     }
-    const page = await fetch(`${ctx.base}/`);
-    assert.equal(page.status, 200);
-    const csp = page.headers.get('content-security-policy');
-    assert.match(csp, /default-src 'none'/);
-    assert.match(csp, /script-src 'self'/);
-    assert.match(await page.text(), /<meta name="robots" content="noindex,nofollow">/);
-    const robots = await (await fetch(`${ctx.base}/robots.txt`)).text();
-    assert.match(robots, /User-agent: \*\s+Disallow: \//);
+    // The dashboard is part of the website now (sloka-academy-frontend/public/admin).
+    for (const path of ['/', '/index.html', '/app.js']) {
+      const res = await fetch(`${ctx.base}${path}`);
+      assert.equal(res.status, 404, path);
+      assert.deepEqual(await res.json(), { error: 'not_found' }, path);
+    }
   });
 });
 

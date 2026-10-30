@@ -77,7 +77,8 @@ function loadConfig(env = process.env) {
   if (!/^[A-Z0-9]{2,8}$/.test(certIdPrefix)) throw new Error('CERT_ID_PREFIX must be 2-8 letters or digits.');
   const studentIdPrefix = (env.STUDENT_ID_PREFIX || 'SLK').trim().toUpperCase();
   if (!/^[A-Z0-9]{2,8}$/.test(studentIdPrefix)) throw new Error('STUDENT_ID_PREFIX must be 2-8 letters or digits.');
-  const dashboardUrl = (env.DASHBOARD_URL || `http://localhost:${port}/`).trim();
+  // The staff dashboard is part of the website (/admin/); locally that is `npm run dev` in sloka-academy-frontend.
+  const dashboardUrl = (env.DASHBOARD_URL || 'http://localhost:3000/admin/').trim();
   const urlOrigin = (u) => {
     try {
       return new URL(u).origin;

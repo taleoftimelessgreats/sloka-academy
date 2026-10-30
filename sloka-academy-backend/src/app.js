@@ -1,6 +1,5 @@
 'use strict';
 
-const path = require('node:path');
 const express = require('express');
 const C = require('./constants');
 const { createAuth } = require('./auth');
@@ -27,8 +26,6 @@ const { createEmailQuota } = require('./emailQuota');
 const { createProfileVerification } = require('./profileVerification');
 const { verificationsRouter } = require('./routes/verifications');
 const { publicVerificationRouter } = require('./routes/publicVerification');
-
-const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 const CSP = [
   "default-src 'none'",
@@ -160,18 +157,8 @@ function createApp({ db, config, notifier, emailQuota, sheetsFetch, background =
   app.use('/api/settings', auth.authenticate, auth.requirePermission('manage'), settingsRouter({ config, sheetSync, delivery, auth }));
   app.use('/api/users', auth.authenticate, auth.requirePermission('manage'), usersRouter({ db, config, auth }));
 
-  app.use('/api', (req, res) => res.status(404).json({ error: 'not_found' }));
-
-  // Dashboard SPA (vanilla, no build step).
-  app.use(
-    express.static(PUBLIC_DIR, {
-      index: 'index.html',
-      dotfiles: 'ignore',
-      setHeaders: (res) => res.setHeader('Cache-Control', 'no-cache'),
-    }),
-  );
-
-  app.use((req, res) => res.status(404).type('text/plain').send('Not found'));
+  // API only: the staff dashboard is part of the website (sloka-academy-frontend/public/admin).
+  app.use((req, res) => res.status(404).json({ error: 'not_found' }));
 
   // eslint-disable-next-line no-unused-vars
   app.use((err, req, res, next) => {

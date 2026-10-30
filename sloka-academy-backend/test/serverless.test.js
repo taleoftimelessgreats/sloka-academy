@@ -48,9 +48,11 @@ describe('serverless handler', () => {
     await tdb.drop();
   });
 
-  test('starts on the first request and serves the API', async () => {
+  test('starts on the first request and serves the API, and nothing else', async () => {
     const me = await fetch(`${base}/api/auth/me`);
     assert.equal(me.status, 401);
+    const page = await fetch(`${base}/`);
+    assert.equal(page.status, 404);
   });
 
   test('hands the enquiry notification to background and it completes', async () => {

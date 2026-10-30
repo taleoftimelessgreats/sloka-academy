@@ -433,7 +433,7 @@ describe('certificates: with student email configured', () => {
     assert.equal(mail.to, 'priya.sharma@example.com');
     assert.equal(mail.resent, false);
     assert.ok(Buffer.isBuffer(mail.pdf) && mail.pdf.subarray(0, 5).toString() === '%PDF-', 'PDF attached');
-    assert.equal(mail.downloadUrl, `http://localhost:4000${r.data.certificate.downloadPath}`);
+    assert.equal(mail.downloadUrl, `http://localhost:3000${r.data.certificate.downloadPath}`);
     assert.match(mail.verifyUrl, /^https:\/\/www\.slokaacademy\.com\/verify\/\?id=SLK-/);
     const row = await regRow(r.data.certificate.id);
     assert.equal(row.email_status, 'sent');
@@ -503,7 +503,8 @@ describe('config', () => {
     assert.equal(c.certIdPrefix, 'SLK');
     assert.equal(c.certVerifyUrl, 'https://www.slokaacademy.com/verify/');
     assert.equal(c.siteUrl, 'https://www.slokaacademy.com');
-    assert.equal(c.publicApiUrl, 'http://localhost:4000');
+    assert.equal(c.dashboardUrl, 'http://localhost:3000/admin/');
+    assert.equal(c.publicApiUrl, 'http://localhost:3000'); // the website's origin; it forwards /api
     assert.throws(() => loadConfig({ JWT_SECRET: 'x'.repeat(32), DATABASE_URL, CERT_ID_PREFIX: 'bad prefix!' }), /CERT_ID_PREFIX/);
   });
 });
