@@ -5,12 +5,14 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "postbuild": "node --no-warnings scripts/flatten-prefetch.mjs",
     "prebuild": "npm run validate:data && node --no-warnings scripts/generate-sitemap.mjs",
     "start": "npx serve out",
     "lint": "eslint",
     "validate:data": "node --no-warnings scripts/validate-data.mjs"
   },
   "dependencies": {
+    "@vercel/functions": "^3.10.5",
     "next": "16.4.2",
     "react": "19.3.0",
     "react-dom": "19.3.0"

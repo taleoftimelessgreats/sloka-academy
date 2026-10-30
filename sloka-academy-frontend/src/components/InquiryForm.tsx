@@ -31,7 +31,7 @@ const REQUIRED_EXTRAS: Record<InquirySource, readonly string[]> = {
 /**
  * Enquiry form for the Pre-register, Contact and brochure flows. Sends the
  * details to the inquiry dashboard API; nothing is stored in the browser.
- * Only rendered when `site.apiUrl` is set.
+ * Only rendered when `formsEnabled` (NEXT_PUBLIC_API_URL is set).
  */
 export function InquiryForm({
   source,
