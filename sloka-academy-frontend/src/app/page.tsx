@@ -105,12 +105,14 @@ export default function Home() {
       </section>
 
       {/* =============================================================== BENTO */}
-      <section className="pb-[clamp(5.5rem,4rem+6vw,10rem)]">
+      <section aria-labelledby="program-at-a-glance" className="pb-[clamp(5.5rem,4rem+6vw,10rem)]">
+        {/* The tiles below are h3s; this keeps the outline h1 > h2 > h3 for screen readers. */}
+        <h2 id="program-at-a-glance" className="sr-only">The program at a glance</h2>
         <div className="wrap grid auto-rows-[minmax(220px,auto)] gap-4 md:grid-cols-6">
           {/* Image tile */}
           <div className="reveal photo-cine relative min-h-[420px] overflow-hidden rounded-[var(--radius-lg)] border border-line md:col-span-4 md:row-span-2">
             <Image
-              src="/images/home-mentoring.webp"
+              src="/images/home-mentoring.jpg"
               alt="Two university students working through a problem together on a laptop"
               fill
               sizes="(min-width: 768px) 66vw, 100vw"
