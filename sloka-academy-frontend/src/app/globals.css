@@ -271,6 +271,7 @@ body {
   .btn-white:hover { background: #e9e5e0; }
 
   .link-glow {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 0.55rem;
@@ -279,6 +280,12 @@ body {
     letter-spacing: 0.02em;
     color: var(--text);
     transition: color 0.25s;
+  }
+  /* The text is ~24px tall; extend the tap area to ~46px without moving the layout. */
+  .link-glow::after {
+    content: "";
+    position: absolute;
+    inset: -0.7rem -0.4rem;
   }
   .link-glow:hover { color: var(--red-hi); }
   .link-glow svg { transition: transform 0.25s var(--ease); }
