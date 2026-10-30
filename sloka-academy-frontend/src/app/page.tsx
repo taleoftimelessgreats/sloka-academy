@@ -112,7 +112,7 @@ export default function Home() {
           {/* Image tile */}
           <div className="reveal photo-cine relative min-h-[420px] overflow-hidden rounded-[var(--radius-lg)] border border-line md:col-span-4 md:row-span-2">
             <Image
-              src="/images/home-mentoring.jpg"
+              src="/images/home-mentoring.webp"
               alt="Two university students working through a problem together on a laptop"
               fill
               sizes="(min-width: 768px) 66vw, 100vw"
