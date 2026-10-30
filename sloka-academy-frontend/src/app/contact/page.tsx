@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { Icon } from "@/components/Icon";
+import { InquiryForm } from "@/components/InquiryForm";
 import { SmartLink } from "@/components/SmartLink";
 import { Em, PageHeader } from "@/components/ui";
-import { preRegisterIsExternal, site } from "@/config/site";
+import { enquiryMailto, formsEnabled, preRegisterIsExternal, site } from "@/config/site";
 
 export const metadata: Metadata = {
   title: "Contact",
@@ -12,21 +13,23 @@ export const metadata: Metadata = {
 
 export default function ContactPage() {
   const { contact } = site;
-  const enquiryMail = `mailto:${contact.email}?subject=${encodeURIComponent(`${site.programName} enquiry`)}&body=${encodeURIComponent(
-    "Name:\nPhone:\nWhat I studied / am studying:\nDomain I'm interested in:\nMy question:\n",
-  )}`;
+  const enquiryMail = enquiryMailto(`${site.programName} enquiry`);
 
   return (
     <>
-      <PageHeader kicker="Contact" title={<>Talk to a person, <Em>not a form.</Em></>} image="/images/studio.webp">
+      <PageHeader
+        kicker="Contact"
+        title={formsEnabled ? <>Questions? <Em>Talk to admissions.</Em></> : <>Talk to a person, <Em>not a form.</Em></>}
+        image="/images/studio.webp"
+      >
         <p className="lede max-w-xl">
           Questions about a domain, the fee or the next batch? Call or email admissions, or visit us in Madhapur.
         </p>
       </PageHeader>
 
-      <section className="section">
-        <div className="wrap grid gap-6 lg:grid-cols-[1.15fr_1fr]">
-          <div className="grid gap-4">
+      <section className="section overflow-x-clip">
+        <div className={`wrap grid gap-6 ${formsEnabled ? "lg:grid-cols-[1fr_1.15fr]" : "lg:grid-cols-[1.15fr_1fr]"}`}>
+          <div className="grid gap-4 self-start">
             <div className="glass p-8">
               <p className="kicker">Call</p>
               <div className="mt-5 space-y-1">
@@ -62,35 +65,48 @@ export default function ContactPage() {
 
           <div id="enquire" className="relative self-start">
             <div className="glow-orb breathe -inset-10 opacity-60" aria-hidden="true" />
-            <div className="glass-strong edge relative p-8 sm:p-11">
-              <p className="kicker">Enquire or pre-register</p>
+            <div className="glass-strong edge relative p-7 sm:p-11">
+              <p className="kicker">{formsEnabled ? "Enquire" : "Enquire or pre-register"}</p>
               <h2 className="display mt-6 text-[2.2rem]">
                 Send a few lines. <Em>We&rsquo;ll call you back.</Em>
               </h2>
-              <p className="mt-6 leading-relaxed text-muted">
-                Tell us your name, phone number, what you studied and the domain you have in mind. We will confirm the
-                fit, the next batch date and how pre-registration works.
-              </p>
-              <div className="mt-9 flex flex-col gap-3">
-                {preRegisterIsExternal && (
-                  <SmartLink href={site.preRegisterUrl} className="btn btn-red">
-                    Open the pre-registration form
-                  </SmartLink>
-                )}
-                <a href={enquiryMail} className={`btn ${preRegisterIsExternal ? "btn-glass" : "btn-red"}`}>
-                  Write to admissions
-                  <Icon name="arrow" size={18} />
-                </a>
-                {contact.whatsapp && (
-                  <SmartLink href={contact.whatsapp} className="btn btn-glass">
-                    Message us on WhatsApp
-                  </SmartLink>
-                )}
-              </div>
+              {formsEnabled ? (
+                <>
+                  <p className="mb-9 mt-6 leading-relaxed text-muted">
+                    Tell us what you studied and what you would like to know. Admissions will call you to answer your
+                    questions and talk through the domains that fit.
+                  </p>
+                  <InquiryForm source="contact" submitLabel="Send enquiry" />
+                </>
+              ) : (
+                <>
+                  <p className="mt-6 leading-relaxed text-muted">
+                    Tell us your name, phone number, what you studied and the domain you have in mind. We will confirm
+                    the fit, the next batch date and how pre-registration works.
+                  </p>
+                  <div className="mt-9 flex flex-col gap-3">
+                    {preRegisterIsExternal && (
+                      <SmartLink href={site.preRegisterUrl} className="btn btn-red">
+                        Open the pre-registration form
+                      </SmartLink>
+                    )}
+                    <a href={enquiryMail} className={`btn ${preRegisterIsExternal ? "btn-glass" : "btn-red"}`}>
+                      Write to admissions
+                      <Icon name="arrow" size={18} />
+                    </a>
+                    {contact.whatsapp && (
+                      <SmartLink href={contact.whatsapp} className="btn btn-glass">
+                        Message us on WhatsApp
+                      </SmartLink>
+                    )}
+                  </div>
+                </>
+              )}
               <div className="hr-glow mt-9 opacity-50" aria-hidden="true" />
               <p className="mt-6 text-xs leading-relaxed text-muted-2">
-                This website doesn&rsquo;t collect personal details or take payments. Registration and payments are
-                handled directly by our admissions team.
+                {formsEnabled
+                  ? "This website doesn’t take payments. Registration and payments are handled directly by our admissions team."
+                  : "This website doesn’t collect personal details or take payments. Registration and payments are handled directly by our admissions team."}
               </p>
             </div>
           </div>

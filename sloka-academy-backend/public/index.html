@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#060608">
+  <title>Sloka Academy Admin</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar" id="topbar" hidden>
+    <a class="brand" href="#/">Sloka Academy <span>Admin</span></a>
+    <nav class="nav" id="nav" aria-label="Main">
+      <a href="#/" data-route="overview">Overview</a>
+      <a href="#/students" data-route="students">Students</a>
+      <a href="#/sessions" data-route="sessions">Sessions</a>
+      <a href="#/certificates" data-route="certificates">Certificates</a>
+      <a href="#/enquiries" data-route="enquiries">Internship enquiries</a>
+      <a href="#/settings" data-route="settings" data-requires="manage" hidden>Settings</a>
+      <a href="#/users" data-route="users" data-requires="manage" hidden>Users</a>
+    </nav>
+    <div class="who">
+      <a href="#/account" id="who-name" data-route="account"></a>
+      <button type="button" class="btn btn-ghost btn-sm" id="logout">Log out</button>
+    </div>
+  </header>
+  <main id="app" class="main" tabindex="-1">
+    <p class="muted">Loading…</p>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <noscript><p class="main">This dashboard needs JavaScript.</p></noscript>
+</body>
+</html>

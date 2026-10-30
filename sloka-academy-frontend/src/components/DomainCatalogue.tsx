@@ -22,15 +22,23 @@ function buildSearch(query: string, stream: StreamId | null) {
   return s ? `?${s}` : "";
 }
 
-function SearchField({ value, onChange }: { value?: string; onChange?: (v: string) => void }) {
+export function SearchField({
+  id = "domain-search",
+  value,
+  onChange,
+}: {
+  id?: string;
+  value?: string;
+  onChange?: (v: string) => void;
+}) {
   return (
     <div className="relative">
-      <label htmlFor="domain-search" className="sr-only">
+      <label htmlFor={id} className="sr-only">
         Search domains
       </label>
       <Icon name="search" size={20} className="pointer-events-none absolute left-6 top-1/2 z-10 -translate-y-1/2 text-muted" />
       <input
-        id="domain-search"
+        id={id}
         type="search"
         value={value}
         onChange={onChange ? (e) => onChange(e.target.value) : undefined}

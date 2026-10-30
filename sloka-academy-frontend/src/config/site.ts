@@ -12,11 +12,22 @@ export const site = {
   description:
     "Sloka Academy's 2-Month Internship Course Program combines structured learning, practical projects and short-term internship opportunities with certification across 42 domains.",
 
-  /** Internship Course Program fee (INR). Shown as original (struck through) and current. */
+  /**
+   * Internship Course Program fee (INR). Shown as original (struck through) and current.
+   */
   fee: {
     original: 14999,
     current: 9999,
   },
+
+  /**
+   * Base URL of the Sloka Academy backend (sloka-academy-backend: enquiries and session
+   * certificates), set at build time, e.g. NEXT_PUBLIC_API_URL=https://admissions.slokaacademy.com
+   * While empty, the Pre-register, Contact, brochure and certificate forms are not shown and
+   * visitors are pointed to phone and email instead, so no data is collected without somewhere
+   * to send it.
+   */
+  apiUrl: (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, ""),
 
   /**
    * CONFIRM: Sloka Academy's academy-specific Teachmint login URL.
@@ -61,12 +72,24 @@ export const site = {
     { label: "YouTube", href: "" },
     { label: "Facebook", href: "" },
   ],
+
+  /**
+   * CONFIRM: legal entity name and registration details for the footer,
+   * e.g. { label: "CIN", value: "…" }, { label: "GSTIN", value: "…" }. Hidden while empty.
+   */
+  legal: {
+    entityName: "",
+    registrations: [] as { label: string; value: string }[],
+  },
 } as const;
+
+export const formsEnabled = Boolean(site.apiUrl);
 
 export const lmsHref = site.lmsUrl || "/lms/";
 export const lmsIsExternal = Boolean(site.lmsUrl);
-export const preRegisterHref = site.preRegisterUrl || "/contact/#enquire";
-export const preRegisterIsExternal = Boolean(site.preRegisterUrl);
+// The on-site form feeds the inquiry dashboard, so it wins over an external form once the API is set.
+export const preRegisterIsExternal = Boolean(site.preRegisterUrl) && !formsEnabled;
+export const preRegisterHref = preRegisterIsExternal ? site.preRegisterUrl : "/pre-register/";
 
 export const navLinks = [
   { href: "/", label: "Home" },
@@ -76,11 +99,23 @@ export const navLinks = [
   { href: "/contact/", label: "Contact" },
 ] as const;
 
+/** Career Guidance Program certificates. Footer only; the header keeps the live site's menu (share the form by session link or QR code). */
+export const certificateLinks = [
+  { href: "/certificate/", label: "Career Guidance Certificate" },
+  { href: "/verify/", label: "Verify a certificate" },
+] as const;
+
 export const policyLinks = [
   { href: "/privacy/", label: "Privacy Notice" },
   { href: "/terms/", label: "Terms of Use" },
   { href: "/refund-policy/", label: "Payment, Cancellation & Refund" },
 ] as const;
+
+/** Prefilled email to admissions, used where the enquiry forms are not available. */
+export const enquiryMailto = (subject: string) =>
+  `mailto:${site.contact.email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
+    "Name:\nPhone:\nWhat I studied / am studying:\nDomain I'm interested in:\nMy question:\n",
+  )}`;
 
 export const formatINR = (amount: number) => `₹${amount.toLocaleString("en-IN")}`;
 export const feeSaving = site.fee.original - site.fee.current;

@@ -1,7 +1,15 @@
 // Content completeness check for the static domain catalogue.
 // Run with: npm run validate:data  (Node 22.18+ strips TypeScript types natively)
 
+import { existsSync } from "node:fs";
 import { DOMAINS, CATEGORIES } from "../src/data/domains.ts";
+import {
+  PROGRAM_BROCHURE,
+  REVIEWS,
+  SAMPLE_CERTIFICATE,
+  STUDENT_TESTIMONIALS,
+  STREAM_BROCHURES,
+} from "../src/data/showcase.ts";
 import { STREAMS } from "../src/data/streams.ts";
 
 // Initial product taxonomy from the website brief (stream button -> domain names).
@@ -56,8 +64,37 @@ if (pharmacy !== "Clinical SAS, Medical Coding, Pharmacovigilance") fail(`Pharma
 if (byStream("pharmacy").includes("VLSI")) fail("VLSI must not appear under Pharmacy");
 if (!byStream("electronics").includes("VLSI")) fail("VLSI must appear under Electronics");
 
+// Home page proof sections (src/data/showcase.ts).
+const inPublic = (path) => path.startsWith("/") && existsSync(new URL(`../public${path}`, import.meta.url));
+const checkFile = (label, path) => !inPublic(path) && fail(`${label}: file not found at public${path}`);
+const checkBrochure = (label, path) => {
+  if (!path.startsWith("/brochures/")) fail(`${label}: brochure must live in /public/brochures`);
+  checkFile(label, path);
+};
+const domainIds = new Set(DOMAINS.map((d) => d.id));
+
+for (const r of REVIEWS) {
+  if (r.permissionOnFile !== true) fail(`${r.name}: review needs written permission on file`);
+  if (!r.name || !r.quote) fail(`${r.name || "Review"}: review needs the reviewer's name and the quote`);
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(r.published)) fail(`${r.name}: published must be YYYY-MM`);
+  if (r.domain !== undefined && !domainIds.has(r.domain)) fail(`${r.name}: unknown domain id "${r.domain}"`);
+  if (r.url !== undefined && !/^https:\/\//.test(r.url)) fail(`${r.name}: the link to the original must be https`);
+}
+for (const t of STUDENT_TESTIMONIALS) {
+  if (!domainIds.has(t.domain)) fail(`Student testimonial ${t.name}: unknown domain id "${t.domain}"`);
+  if (!t.name || !t.detail || !t.quote) fail(`S testimonial ${t.name || "?"}: needs a name, detail and quote`);
+  if (t.quote.length > 170) fail(`S testimonial ${t.name}: keep the quote to 170 characters so the cards line up`);
+  if (REVIEWS.some((r) => r.name === t.name)) fail(`S testimonial ${t.name}: must not reuse a genuine reviewer's name`);
+}
+if (PROGRAM_BROCHURE) checkBrochure("Program brochure", PROGRAM_BROCHURE.file);
+if (SAMPLE_CERTIFICATE) checkFile("Sample certificate", SAMPLE_CERTIFICATE.src);
+for (const b of STREAM_BROCHURES) {
+  if (!STREAMS.some((s) => s.id === b.stream)) fail(`Stream brochure: unknown stream "${b.stream}"`);
+  checkBrochure(`${b.stream} brochure`, b.file);
+}
+
 if (errors.length) {
-  console.error(`✗ Domain data check failed (${errors.length}):\n  - ${errors.join("\n  - ")}`);
+  console.error(`✗ Data check failed (${errors.length}):\n  - ${errors.join("\n  - ")}`);
   process.exit(1);
 }
-console.log(`✓ ${DOMAINS.length} domains, ${STREAMS.length} streams, mappings match the brief.`);
+console.log(`✓ ${DOMAINS.length} domains, ${STREAMS.length} streams, mappings match the brief. Showcase data OK.`);

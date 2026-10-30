@@ -305,6 +305,122 @@ body {
     box-shadow: 0 0 24px -4px var(--glow), 0 0 0 1px rgb(255 90 96 / 0.3) inset;
   }
 
+  /* Form fields. Borders use --muted-2 for at least 3:1 contrast against the dark panels (WCAG 1.4.11). */
+  .field-label {
+    display: block;
+    margin-bottom: 0.5rem;
+    font-size: 0.86rem;
+    font-weight: 500;
+    line-height: 1.4;
+    color: var(--text);
+  }
+  .field-optional { font-weight: 400; color: var(--muted); }
+  .field-hint,
+  .field-error {
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+    line-height: 1.5;
+  }
+  .field-hint { color: var(--muted); }
+  .field-error { color: var(--red-hi); font-weight: 500; }
+  .field {
+    display: block;
+    width: 100%;
+    min-height: 52px;
+    padding: 0 1rem;
+    border-radius: 14px;
+    border: 1px solid var(--muted-2);
+    background: rgb(255 255 255 / 0.04);
+    color: var(--text);
+    font-size: 1rem;
+    transition: border-color 0.25s var(--ease), box-shadow 0.25s var(--ease), background-color 0.25s var(--ease);
+  }
+  .field::placeholder { color: var(--muted); opacity: 0.75; }
+  .field:hover { border-color: var(--muted); }
+  .field:focus-visible {
+    outline: none;
+    border-color: rgb(255 90 96 / 0.75);
+    background: rgb(255 255 255 / 0.06);
+    box-shadow: 0 0 0 3px rgb(255 59 66 / 0.28);
+  }
+  .field[aria-invalid="true"] {
+    border-color: var(--red-hi);
+    background: rgb(227 20 27 / 0.07);
+  }
+  /* Keep autofilled fields dark instead of the browser's light highlight. */
+  .field:-webkit-autofill {
+    -webkit-text-fill-color: var(--text);
+    caret-color: var(--text);
+    box-shadow: 0 0 0 1000px #1b1b21 inset;
+  }
+  .field:-webkit-autofill:focus-visible { box-shadow: 0 0 0 1000px #1b1b21 inset, 0 0 0 3px rgb(255 59 66 / 0.28); }
+  textarea.field {
+    min-height: 128px;
+    padding-block: 0.8rem;
+    line-height: 1.6;
+    resize: vertical;
+  }
+  select.field {
+    appearance: none;
+    padding-right: 2.75rem;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%23a39d97' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m4 6 4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 1rem center;
+  }
+  select.field option,
+  select.field optgroup { background: var(--bg-3); color: var(--text); }
+
+  /* Checkbox drawn to match .field (the native one is barely visible on dark panels). */
+  .check {
+    appearance: none;
+    display: grid;
+    place-content: center;
+    flex-shrink: 0;
+    width: 20px;
+    height: 20px;
+    border: 1.5px solid var(--muted);
+    border-radius: 6px;
+    background: rgb(255 255 255 / 0.04);
+    cursor: pointer;
+    transition: border-color 0.2s var(--ease), background-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+  }
+  .check::after {
+    content: "";
+    width: 11px;
+    height: 11px;
+    background: #fff;
+    clip-path: polygon(14% 52%, 0 66%, 38% 100%, 100% 22%, 86% 8%, 38% 70%);
+    transform: scale(0);
+    transition: transform 0.15s var(--ease);
+  }
+  .check:hover { border-color: var(--text); }
+  .check:checked { border-color: var(--red); background: var(--red); }
+  .check:checked::after { transform: scale(1); }
+  .check:focus-visible {
+    outline: none;
+    border-color: var(--red-hi);
+    box-shadow: 0 0 0 3px rgb(255 59 66 / 0.28);
+  }
+  .check[aria-invalid="true"]:not(:checked) { border-color: var(--red-hi); }
+
+  /* Modal dialog */
+  .dialog {
+    width: min(600px, calc(100vw - 32px));
+    max-height: calc(100dvh - 32px);
+    margin: auto;
+    padding: 0;
+    overflow-y: auto;
+    border: 1px solid var(--line-2);
+    border-radius: var(--radius-lg);
+    background: linear-gradient(180deg, rgb(20 20 26 / 0.97), rgb(10 10 14 / 0.97));
+    color: var(--text);
+    box-shadow: 0 40px 120px -40px var(--glow);
+  }
+  .dialog::backdrop {
+    background: rgb(0 0 0 / 0.7);
+    backdrop-filter: blur(6px);
+  }
+
   /* Domain card */
   .d-card {
     position: relative;
@@ -361,6 +477,59 @@ body {
   @media (prefers-reduced-motion: no-preference) {
     .marquee-track { animation: marquee 60s linear infinite; }
     .marquee:hover .marquee-track { animation-play-state: paused; }
+  }
+
+  /* Student reviews: rows of equal cards scrolling in opposite directions (ReviewMarquee) */
+  .reviews-row {
+    overflow: hidden;
+    mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  }
+  .reviews-track { display: flex; width: max-content; }
+  .reviews-list { display: flex; gap: 1rem; padding-right: 1rem; padding-block: 6px; }
+  .review-card {
+    flex: none;
+    width: 300px;
+    min-height: 284px; /* each row stretches its cards to the tallest, so sizes stay equal */
+    padding: 1.5rem;
+    background: linear-gradient(180deg, rgb(255 255 255 / 0.055), rgb(255 255 255 / 0.02));
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    transition: transform 0.35s var(--ease), border-color 0.35s var(--ease), box-shadow 0.35s var(--ease);
+  }
+  .review-card:hover {
+    transform: translateY(-3px);
+    border-color: rgb(255 90 96 / 0.35);
+    box-shadow: 0 18px 40px -24px rgb(227 20 27 / 0.55);
+  }
+  .review-card-sample { border-style: dashed; border-color: var(--line-2); background: rgb(255 255 255 / 0.02); }
+  .review-tag {
+    display: inline-flex; align-items: center; white-space: nowrap;
+    padding: 2px 9px; border-radius: 999px;
+    font-size: 0.68rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+  .review-tag-genuine { color: var(--red-hi); border: 1px solid rgb(255 59 66 / 0.45); background: rgb(227 20 27 / 0.08); }
+  .review-tag-sample { color: var(--muted); border: 1px dashed var(--line-2); }
+  .review-avatar {
+    display: grid; place-items: center; flex: none;
+    width: 2.5rem; height: 2.5rem; border-radius: 999px;
+    font-size: 0.8rem; font-weight: 600; letter-spacing: 0.04em;
+    color: var(--text); background: rgb(227 20 27 / 0.22); border: 1px solid rgb(255 59 66 / 0.4);
+  }
+  .review-avatar-sample { color: var(--muted); background: rgb(255 255 255 / 0.04); border: 1px dashed var(--line-2); }
+  @media (min-width: 640px) {
+    .review-card { width: 352px; min-height: 260px; }
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .reviews-track { animation: marquee var(--reviews-duration, 50s) linear infinite; }
+    .reviews-row-reverse .reviews-track { animation-direction: reverse; }
+    .reviews-row:hover .reviews-track,
+    .reviews-row:focus-within .reviews-track { animation-play-state: paused; }
+  }
+  /* Reduced motion: no animation; each row is a swipeable list without the loop copy. */
+  @media (prefers-reduced-motion: reduce) {
+    .reviews-row { overflow-x: auto; scroll-snap-type: x mandatory; mask-image: none; padding-inline: 1rem; }
+    .reviews-row .review-card { scroll-snap-align: start; }
+    .reviews-dup { display: none; }
   }
 
   /* Prose */
