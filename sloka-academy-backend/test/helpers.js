@@ -158,6 +158,12 @@ const validInquiry = (extra = {}) => ({
   ...extra,
 });
 
+/** The "Refer a friend" part every certificate registration needs. */
+const referral = (extra = {}) => ({
+  referrals: [{ name: 'Kavya Reddy', phone: '9000099999', college: 'Osmania University', ...extra }],
+  referralConsent: true,
+});
+
 function postPublic(base, body, headers = {}) {
   return fetch(`${base}/api/public/inquiries`, {
     method: 'POST',
@@ -200,4 +206,4 @@ function client(base, cookie) {
   };
 }
 
-module.exports = { startApp, openTestDatabase, validInquiry, postPublic, addUser, login, client, ALLOWED_ORIGIN, TEST_SECRET };
+module.exports = { startApp, openTestDatabase, validInquiry, referral, postPublic, addUser, login, client, ALLOWED_ORIGIN, TEST_SECRET };

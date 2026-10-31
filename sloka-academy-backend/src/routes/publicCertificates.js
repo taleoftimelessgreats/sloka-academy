@@ -14,8 +14,9 @@ const REVOKED_TEXT = 'This certificate has been revoked by Sloka Academy. If you
 /**
  * Website-facing certificate routes (cross-origin, same CORS policy as the enquiry form):
  *   GET  /api/public/sessions
- *   POST /api/public/certificate-registrations
+ *   POST /api/public/certificate-registrations   (with `preview: true`: checks everything and returns a PREVIEW PDF)
  *   GET  /api/public/certificates/:id/verify
+ *   GET  /api/public/certificates/:id/preview      (the certificate as issued, for viewing on the verify page)
  *   GET  /api/public/certificates/:id/pdf?token=...
  */
 function publicCertificatesRouter({ config, certRepo, delivery, sheetSync, verifications, quota = null }) {
@@ -35,7 +36,7 @@ function publicCertificatesRouter({ config, certRepo, delivery, sheetSync, verif
     return true;
   };
 
-  for (const p of ['/sessions', '/certificate-registrations', '/certificates/:id/verify', '/certificates/:id/pdf']) {
+  for (const p of ['/sessions', '/certificate-registrations', '/certificates/:id/verify', '/certificates/:id/preview', '/certificates/:id/pdf']) {
     router.options(p, cors, preflight);
   }
 
@@ -73,6 +74,14 @@ function publicCertificatesRouter({ config, certRepo, delivery, sheetSync, verif
 
     const existing = await certRepo.findExistingRegistration(session.id, values.email, values.phone);
     if (existing) return alreadyRegistered(existing, res);
+
+    // Step 1 of the form: show the student their certificate before it is issued. Nothing is stored.
+    if (body.preview === true) {
+      const pdf = await delivery.preview(session, values, await certRepo.templateFor(session.id));
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', 'inline; filename="certificate-preview.pdf"');
+      return res.send(pdf);
+    }
 
     let issued;
     try {
@@ -136,6 +145,21 @@ function publicCertificatesRouter({ config, certRepo, delivery, sheetSync, verif
       sessionDate: row.session_date,
       issuedAt: row.issued_at,
     });
+  });
+
+  // The certificate as issued (REVOKED stamped on it if withdrawn), shown with the verification result. Anyone
+  // with the ID can already verify the certificate, so this needs no download token and is not counted as a download.
+  router.get('/certificates/:id/preview', cors, async (req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    const ip = req.ip || 'unknown';
+    if (limited(pdfLimiter, ip, res)) return undefined;
+    pdfLimiter.hit(ip);
+    const row = await certRepo.findByCertificateId(normalizeCertificateId(req.params.id));
+    if (!row) return res.status(404).json({ error: 'not_found' });
+    const pdf = await delivery.render(row);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="Sloka-Academy-Certificate-${row.certificate_id}.pdf"`);
+    return res.send(pdf);
   });
 
   router.get('/certificates/:id/pdf', cors, async (req, res) => {

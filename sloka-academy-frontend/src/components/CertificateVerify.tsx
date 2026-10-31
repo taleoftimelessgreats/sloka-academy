@@ -3,7 +3,8 @@
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { site } from "@/config/site";
-import { formatDate, normaliseCertificateId, verifyCertificate, type Verification } from "@/lib/certificates";
+import { certificatePreviewUrl, formatDate, normaliseCertificateId, verifyCertificate, type Verification } from "@/lib/certificates";
+import { CertificatePreview } from "./CertificatePreview";
 import { Icon } from "./Icon";
 
 type Result = { state: "idle" } | { state: "checking" } | Verification;
@@ -45,7 +46,14 @@ function Outcome({ result }: { result: Result }) {
       {!valid && (
         <p className="mt-2 text-sm text-muted">Sloka Academy issued this certificate but has since withdrawn it.</p>
       )}
-      <dl className="mt-6 divide-y divide-line border-y border-line text-[0.95rem]">
+      <div className="mt-6">
+        <CertificatePreview
+          key={result.id}
+          url={certificatePreviewUrl(result.id)}
+          label={`The certificate ${result.id}, issued to ${result.name}${valid ? "" : ", stamped revoked"}`}
+        />
+      </div>
+      <dl className="mt-7 divide-y divide-line border-y border-line text-[0.95rem]">
         {[
           ["Issued to", result.name],
           ["Session", result.sessionTitle],

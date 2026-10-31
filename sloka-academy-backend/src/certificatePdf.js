@@ -159,7 +159,8 @@ async function renderOnTemplate(doc, data, config, template) {
 
 /**
  * Render the certificate for one registration: on an uploaded template when given, otherwise the built-in design.
- * data: { certificateId, name, college?, sessionTitle, sessionDate, venue, mode, issuedAt, revoked? }
+ * data: { certificateId, name, college?, sessionTitle, sessionDate, venue, mode, issuedAt, revoked?, preview? }
+ * A revoked certificate is stamped REVOKED; a preview (before the certificate is issued) is stamped PREVIEW.
  */
 async function renderCertificatePdf(data, config, template = null) {
   const doc = await PDFDocument.create();
@@ -168,16 +169,17 @@ async function renderCertificatePdf(data, config, template = null) {
   const id = printable(data.certificateId);
   if (template) {
     const page = await renderOnTemplate(doc, data, config, template);
-    if (data.revoked) await drawRevoked(doc, page);
+    await drawStamp(doc, page, data);
     return finish(doc, data, { name, title, id });
   }
   return renderBuiltIn(doc, data, config, { name, title, id });
 }
 
-async function drawRevoked(doc, page) {
+async function drawStamp(doc, page, data) {
+  const mark = data.revoked ? 'REVOKED' : data.preview ? 'PREVIEW' : null;
+  if (!mark) return;
   const bold = await doc.embedFont(StandardFonts.HelveticaBold);
   const { width: W, height: H } = page.getSize();
-  const mark = 'REVOKED';
   const size = Math.min(110, W / 6.5);
   const w = bold.widthOfTextAtSize(mark, size);
   const angle = 24;
@@ -304,7 +306,7 @@ async function renderBuiltIn(doc, data, config, { name, title, id }) {
     page.drawText(s, { x: right - bold.widthOfTextAtSize(s, 13), y: 66, size: 13, font: bold, color: INK });
   }
 
-  if (data.revoked) await drawRevoked(doc, page);
+  await drawStamp(doc, page, data);
   return finish(doc, data, { name, title, id });
 }
 

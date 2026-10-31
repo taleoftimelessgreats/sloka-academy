@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { PDFDocument } = require('pdf-lib');
-const { startApp, addUser, login, client, ALLOWED_ORIGIN } = require('./helpers');
+const { startApp, addUser, login, client, referral, ALLOWED_ORIGIN } = require('./helpers');
 const { validateLayout, DEFAULT_LAYOUT } = require('../src/certificateTemplates');
 const { localDate } = require('../src/util');
 
@@ -154,7 +154,7 @@ describe('certificate templates', () => {
       const r = await fetch(`${ctx.base}/api/public/certificate-registrations`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Origin: ALLOWED_ORIGIN },
-        body: JSON.stringify({ sessionId: s.id, code: s.code, name: 'Asha Kumar', email, phone: '9876543210', college: 'JNTU Hyderabad', consent: true }),
+        body: JSON.stringify({ sessionId: s.id, code: s.code, name: 'Asha Kumar', email, phone: '9876543210', college: 'JNTU Hyderabad', consent: true, ...referral() }),
       });
       return (await r.json()).certificate;
     };

@@ -3,7 +3,7 @@
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const vm = require('node:vm');
-const { startApp, addUser, login, client, ALLOWED_ORIGIN } = require('./helpers');
+const { startApp, addUser, login, client, referral, ALLOWED_ORIGIN } = require('./helpers');
 const { parseWebAppUrl, isTestDeploymentUrl, appsScript } = require('../src/sheets');
 const { localDate } = require('../src/util');
 
@@ -128,6 +128,7 @@ describe('google sheets sync (Apps Script web app)', () => {
         college: 'JNTU Hyderabad',
         stream: 'electronics',
         consent: true,
+        ...referral(),
         ...extra,
       }),
     });
@@ -207,7 +208,7 @@ describe('google sheets sync (Apps Script web app)', () => {
     await ctx.settle();
     assert.equal(google.rows('Career Guidance Registrations').length, 3);
     assert.equal(google.rows('Career Guidance Registrations')[2][1], c2.id);
-    assert.equal(google.rows('Referrals').length, 3, 'no friends on that one');
+    assert.equal(google.rows('Referrals').length, 4, 'and the friend referred with it');
 
     const status = (await admin.get('/api/settings')).data.googleSheet;
     assert.equal(status.pending, 0);
@@ -222,14 +223,14 @@ describe('google sheets sync (Apps Script web app)', () => {
     assert.equal(r.data.ok, true);
     assert.equal(r.data.synced, 2, 'sent again');
     assert.equal(google.rows('Career Guidance Registrations').length, 3, 'but the script skipped rows already there');
-    assert.equal(google.rows('Referrals').length, 3);
+    assert.equal(google.rows('Referrals').length, 4);
   });
 
   test('a wrong secret, a private deployment or a bad URL give clear messages; rows wait for the retry', async () => {
     const other = await fetch(`${ctx.base}/api/public/certificate-registrations`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: ALLOWED_ORIGIN },
-      body: JSON.stringify({ sessionId: session.id, code: session.code, name: 'Meena K', email: 'meena@example.com', phone: '9000000002', college: 'VNR VJIET', consent: true }),
+      body: JSON.stringify({ sessionId: session.id, code: session.code, name: 'Meena K', email: 'meena@example.com', phone: '9000000002', college: 'VNR VJIET', consent: true, ...referral({ phone: '9000099998' }) }),
     });
     assert.equal(other.status, 201);
 

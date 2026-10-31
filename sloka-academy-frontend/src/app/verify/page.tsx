@@ -16,7 +16,7 @@ export default function VerifyPage() {
       <PageHeader kicker="Certificate verification" title={<>Check a certificate <Em>is genuine.</Em></>} image="/images/studio.webp">
         <p className="lede max-w-xl">
           Enter the certificate ID printed at the bottom of a Sloka Academy certificate. We show who it was issued to,
-          for which session, and whether it is still valid.
+          for which session, whether it is still valid, and the certificate itself.
         </p>
       </PageHeader>
 

@@ -25,6 +25,26 @@ function createCertificateDelivery({ config, certRepo, templateRepo, notifier, l
   }
 
   /**
+   * A sample of the certificate a registration would get, stamped PREVIEW and without a real certificate ID.
+   * session: a sessions row; v: validated registration values.
+   */
+  async function preview(session, v, templateId) {
+    const template = templateId ? await templateRepo.forRender(templateId) : null;
+    const data = {
+      certificateId: `${config.certIdPrefix}-${new Date().getFullYear()}-XXXXXXXX`,
+      name: v.name,
+      college: v.college,
+      sessionTitle: session.title,
+      sessionDate: session.session_date,
+      venue: session.venue,
+      mode: session.mode,
+      issuedAt: new Date().toISOString(),
+      preview: true,
+    };
+    return Buffer.from(await renderCertificatePdf(data, config, template));
+  }
+
+  /**
    * Email the certificate to the address on the registration. `token` is the download token from
    * issuing; without one a fresh link is created (older links stop working). Never throws.
    * Resolves to 'sent' | 'failed' | 'off' | 'skipped'.
@@ -75,6 +95,7 @@ function createCertificateDelivery({ config, certRepo, templateRepo, notifier, l
   return {
     enabled,
     render,
+    preview,
     deliver,
     /** Resolves once every delivery started so far has finished (tests, shutdown). */
     idle: () => Promise.allSettled([...inFlight]),

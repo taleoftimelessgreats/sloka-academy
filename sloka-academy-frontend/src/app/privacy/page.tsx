@@ -34,7 +34,7 @@ export default function PrivacyPage() {
             college, optionally your stream and year of study, and the session you attended. We use these details to
             issue your certificate, email it to you and answer questions about it. Each certificate has an ID. Anyone
             who has that ID can confirm on our Verify page that the certificate is genuine; the check shows your name,
-            the session and its date, and nothing else.
+            the session and its date, and the certificate itself as it was printed.
           </p>
           <p>
             If you have also enquired about one of our programs, we keep both in a single student record, so that our
@@ -43,9 +43,9 @@ export default function PrivacyPage() {
 
           <h2>Referring a friend</h2>
           <p>
-            The certificate form lets you refer up to three friends by giving each friend&rsquo;s name, mobile number
-            and college. Please do this only if your friend has agreed; you confirm that they have before sending the
-            form. Our admissions team uses these details only to contact your friend about upcoming {site.name}{" "}
+            The certificate form asks you to refer one to three friends by giving each friend&rsquo;s name, mobile
+            number and college. Please do this only if your friend has agreed; you confirm that they have before sending
+            the form. Referred friends do not receive a certificate. Our admissions team uses these details only to contact your friend about upcoming {site.name}{" "}
             sessions, and records that you referred them. If a friend does not want to hear from us, they can tell us
             when we call, or email <a href={`mailto:${site.contact.email}`}>{site.contact.email}</a>, and we will
             delete their details.

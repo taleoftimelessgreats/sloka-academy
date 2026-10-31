@@ -2,7 +2,7 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startApp, openTestDatabase, addUser, login, client, postPublic, validInquiry, ALLOWED_ORIGIN } = require('./helpers');
+const { startApp, openTestDatabase, addUser, login, client, postPublic, validInquiry, referral, ALLOWED_ORIGIN } = require('./helpers');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -27,6 +27,7 @@ const student = (sessionId, code, extra = {}) => ({
   yearOfStudy: 'year-3',
   consent: true,
   website: '',
+  ...referral(),
   ...extra,
 });
 

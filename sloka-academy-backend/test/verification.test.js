@@ -2,7 +2,7 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startApp, addUser, login, client, postPublic, validInquiry, ALLOWED_ORIGIN } = require('./helpers');
+const { startApp, addUser, login, client, postPublic, validInquiry, referral, ALLOWED_ORIGIN } = require('./helpers');
 const { createNotifier } = require('../src/notify');
 const { localDate } = require('../src/util');
 
@@ -20,6 +20,7 @@ const registration = (s, extra = {}) => ({
   phone: '98111 00001',
   college: 'Vasavi Degree College',
   consent: true,
+  ...referral(),
   ...extra,
 });
 

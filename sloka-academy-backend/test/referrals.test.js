@@ -40,6 +40,10 @@ describe('refer a friend (certificate registration)', () => {
 
   test('referral details are validated, field by field', async () => {
     const cases = [
+      [{}, { referrals: /at least one friend/ }],
+      [{ referrals: [], referralConsent: true }, { referrals: /at least one friend/ }],
+      [{ referrals: [{ name: '', phone: ' ', college: '' }], referralConsent: true }, { 'referrals.0.name': /full name/, 'referrals.0.phone': /mobile number/, 'referrals.0.college': /college/ }],
+      [{ referrals: [friend(1), {}], referralConsent: true }, { 'referrals.1.name': /full name/ }],
       [{ referrals: [friend(1)] }, { referralConsent: /friends agreed to be contacted/ }],
       [{ referrals: [{ name: 'Ravi' }], referralConsent: true }, { 'referrals.0.phone': /mobile number/, 'referrals.0.college': /college/ }],
       [{ referrals: [friend(1, { phone: '98765 43210' })], referralConsent: true }, { 'referrals.0.phone': /your own number/ }],
@@ -56,18 +60,14 @@ describe('refer a friend (certificate registration)', () => {
     assert.equal((await admin.get('/api/inquiries?source=referral')).data.total, 0, 'nothing saved');
   });
 
-  test('blank friend rows are ignored; a registration without referrals still works', async () => {
-    const r = await register(student({ email: 'solo@example.com', phone: '9123400000', referrals: [{ name: '', phone: ' ', college: '' }] }));
-    assert.equal(r.status, 201);
-    assert.equal((await admin.get('/api/inquiries?source=referral')).data.total, 0);
-  });
-
-  test('each friend becomes a new referral enquiry linked to the registration, without a student profile', async () => {
+  test('each friend becomes a new referral enquiry linked to the registration, without a certificate or student profile', async () => {
     const before = (await admin.get('/api/students')).data.total;
+    const certsBefore = (await ctx.db.get('SELECT COUNT(*) AS n FROM certificate_registrations')).n;
     const r = await register(student({ referrals: [friend(1), friend(2, { name: 'Ravi Teja', phone: '+91 91234 56780', college: 'Osmania University' })], referralConsent: true }));
     assert.equal(r.status, 201);
     const certId = r.data.certificate.id;
     assert.equal((await admin.get('/api/students')).data.total, before + 1, 'only the student who registered gets a profile');
+    assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM certificate_registrations')).n, certsBefore + 1, 'and the only certificate');
 
     const list = await counsellor.get('/api/inquiries?source=referral&sort=name&dir=asc');
     assert.equal(list.status, 200);

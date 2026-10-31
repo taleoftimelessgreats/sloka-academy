@@ -59,3 +59,7 @@ export async function verifyCertificate(rawId: string): Promise<Verification> {
 }
 
 export const certificateDownloadUrl = (cert: IssuedCertificate) => `${site.apiUrl}${cert.downloadPath}`;
+
+/** The certificate as issued (stamped REVOKED if withdrawn), for showing with a verification. Anyone with the ID may view it. */
+export const certificatePreviewUrl = (id: string) =>
+  `${site.apiUrl}/api/public/certificates/${encodeURIComponent(normaliseCertificateId(id))}/preview`;

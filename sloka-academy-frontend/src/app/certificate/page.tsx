@@ -14,8 +14,9 @@ export const metadata: Metadata = {
 
 const STEPS = [
   "Choose the career guidance session you attended and enter the code announced at the end of it.",
-  "Type your name in English letters, exactly as it should be printed on the certificate.",
-  "Download your participation certificate straight away. We also email the PDF to you. Keep the certificate ID printed on it.",
+  "Type your name in English letters, exactly as it should be printed on the certificate, and refer at least one friend from another college.",
+  "Preview your certificate and check your name. Confirm, and download your participation certificate straight away.",
+  "We also email the PDF to you. Keep the certificate ID printed on it: anyone can verify the certificate with it.",
 ];
 
 export default function CertificatePage() {

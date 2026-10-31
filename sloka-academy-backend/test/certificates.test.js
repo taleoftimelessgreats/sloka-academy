@@ -2,7 +2,7 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startApp, addUser, login, client, ALLOWED_ORIGIN } = require('./helpers');
+const { startApp, addUser, login, client, referral, ALLOWED_ORIGIN } = require('./helpers');
 const { loadConfig } = require('../src/config');
 const { localDate } = require('../src/util');
 
@@ -36,6 +36,7 @@ const student = (sessionId, code, extra = {}) => ({
   yearOfStudy: 'year-3',
   consent: true,
   website: '',
+  ...referral(),
   ...extra,
 });
 

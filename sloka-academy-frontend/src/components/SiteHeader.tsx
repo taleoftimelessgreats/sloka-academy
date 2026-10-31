@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { navLinks, preRegisterHref, preRegisterIsExternal } from "@/config/site";
+import { navLinks, preRegisterHref, preRegisterIsExternal, verifyLink } from "@/config/site";
 import { Icon } from "./Icon";
 import { Logo } from "./Logo";
 import { SmartLink } from "./SmartLink";
@@ -75,6 +75,16 @@ export function SiteHeader() {
         </nav>
 
         <div className="hidden items-center gap-3 lg:flex">
+          <Link
+            href={verifyLink.href}
+            aria-current={isActive(pathname, verifyLink.href) ? "page" : undefined}
+            title={verifyLink.label}
+            className="btn btn-glass !min-h-[44px] !px-3.5 !text-[0.84rem] xl:!px-5"
+          >
+            <Icon name="shield" size={16} />
+            {/* Icon only until there is room for the words beside the menu. */}
+            <span className="sr-only xl:not-sr-only">{verifyLink.label}</span>
+          </Link>
           {/* One place for every sign-in: students to the LMS, staff to the admin portal. */}
           <Link
             href="/login/"
@@ -123,6 +133,16 @@ export function SiteHeader() {
                 </li>
               );
             })}
+            <li className="border-b border-line">
+              <Link
+                href={verifyLink.href}
+                aria-current={isActive(pathname, verifyLink.href) ? "page" : undefined}
+                className={`display flex items-center justify-between py-4 text-[1.6rem] ${isActive(pathname, verifyLink.href) ? "text-text" : "text-muted"}`}
+              >
+                {verifyLink.label}
+                <Icon name="shield" size={22} />
+              </Link>
+            </li>
             <li className="border-b border-line">
               <Link
                 href="/login/"

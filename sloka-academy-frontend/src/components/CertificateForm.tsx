@@ -8,12 +8,14 @@ import { YEARS_OF_STUDY } from "@/data/inquiry";
 import { STREAMS } from "@/data/streams";
 import {
   certificateDownloadUrl,
+  certificatePreviewUrl,
   fetchOpenSessions,
   formatDate,
   type GuidanceSession,
   type IssuedCertificate,
 } from "@/lib/certificates";
 import type { ProfileVerification as Verification } from "@/lib/profileVerification";
+import { CertificatePreview } from "./CertificatePreview";
 import { Consent, Field, FormError, FormGrid, Honeypot, SubmitButton, fieldProps } from "./FormParts";
 import { Icon } from "./Icon";
 import { ProfileVerification } from "./ProfileVerification";
@@ -21,8 +23,22 @@ import { Note } from "./ui";
 
 type Sessions = { state: "loading" } | { state: "ready"; list: GuidanceSession[] } | { state: "failed" };
 
+/** Step 2: the certificate as it will be printed (stamped PREVIEW), before it is issued. */
+type Preview = {
+  state: "preview";
+  pdf: ArrayBuffer;
+  /** The checked registration, sent again to issue the certificate. */
+  payload: Record<string, unknown>;
+  details: [string, string][];
+  email: string;
+  referred: number;
+  confirming: boolean;
+  error: string | null;
+};
+
 type Status =
   | { state: "idle" | "sending" }
+  | Preview
   | { state: "issued"; certificate: IssuedCertificate; emailedTo: string | null; verification: Verification | null; referred: number }
   | { state: "already"; emailed: boolean }
   | { state: "error"; message: string; fields: Record<string, string> };
@@ -30,7 +46,16 @@ type Status =
 /** One friend under "Refer a friend". `key` only identifies the row in the form. */
 type Friend = { key: number; name: string; phone: string; college: string };
 const MAX_FRIENDS = 3;
-const isFilled = (f: Friend) => Boolean(f.name.trim() || f.phone.trim() || f.college.trim());
+
+type Answer = {
+  certificate?: IssuedCertificate;
+  emailing?: boolean;
+  fields?: Record<string, string>;
+  emailed?: boolean;
+  verification?: Verification;
+} | null;
+
+const NOT_SENT = "That didn't go through. Please try again, or call us.";
 
 function sessionLabel(s: GuidanceSession) {
   return `${s.title} · ${formatDate(s.date)} · ${s.mode === "online" ? "Online" : s.venue}`;
@@ -67,6 +92,9 @@ function Issued({
             {referred === 1 ? "them" : "each of them"} to our upcoming sessions.
           </p>
         )}
+      </div>
+      <div className="mt-7">
+        <CertificatePreview url={certificatePreviewUrl(certificate.id)} label={`Your certificate, issued to ${certificate.name}`} />
       </div>
       <dl className="mt-7 divide-y divide-line border-y border-line text-[0.95rem]">
         {[
@@ -109,11 +137,54 @@ function Issued({
   );
 }
 
+/** Step 2: the student checks the certificate before it is issued, then confirms or goes back to the form. */
+function PreviewStep({ preview, onConfirm, onEdit }: { preview: Preview; onConfirm: () => void; onEdit: () => void }) {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  useEffect(() => headingRef.current?.focus(), []);
+  return (
+    <div>
+      <p className="kicker">Preview</p>
+      <h2 ref={headingRef} tabIndex={-1} className="display mt-5 scroll-mt-32 text-[2rem] outline-none">
+        Check your certificate.
+      </h2>
+      <p className="mt-4 leading-relaxed text-muted">
+        This is how your certificate will look. Make sure your name is spelled exactly as it should be printed. The
+        certificate ID is added when the certificate is issued.
+      </p>
+      <div className="mt-7">
+        <CertificatePreview data={preview.pdf} label={`Preview of the certificate for ${preview.details[0][1]}`} />
+      </div>
+      <dl className="mt-7 divide-y divide-line border-y border-line text-[0.95rem]">
+        {preview.details.map(([label, value]) => (
+          <div key={label} className="grid gap-1 py-3.5 sm:grid-cols-[150px_1fr] sm:gap-4">
+            <dt className="text-muted-2">{label}</dt>
+            <dd className="font-medium">{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {preview.error && (
+        <div className="mt-6">
+          <FormError message={preview.error} />
+        </div>
+      )}
+      <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+        <button type="button" onClick={onConfirm} disabled={preview.confirming} className="btn btn-red flex-1 disabled:opacity-60">
+          {preview.confirming ? "Issuing…" : "Confirm and get my certificate"}
+          {!preview.confirming && <Icon name="arrow" size={18} />}
+        </button>
+        <button type="button" onClick={onEdit} disabled={preview.confirming} className="btn btn-glass flex-1 disabled:opacity-60">
+          Edit details
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * The Career Guidance Certificate form (separate from Internship Course Program
- * pre-registration). Lists the sessions open for registration, checks the
- * session code and issues the certificate straight away; the backend also emails
- * the PDF. `?session=<id>` preselects a session (for links and QR codes).
+ * pre-registration). Lists the sessions open for registration and checks the session
+ * code. The student previews the certificate, confirms, and gets it straight away; the
+ * backend also emails the PDF. `?session=<id>` preselects a session (for links and QR codes).
  */
 export function CertificateForm() {
   const uid = useId();
@@ -135,62 +206,89 @@ export function CertificateForm() {
     };
   }, []);
 
+  const post = (payload: Record<string, unknown>) =>
+    fetch(`${site.apiUrl}/api/public/certificate-registrations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+  /** Answers both steps handle the same way. False when the response is none of them. */
+  function settled(status: number, body: Answer) {
+    if (status === 409) setStatus({ state: "already", emailed: Boolean(body?.emailed) });
+    else if (status === 400) setStatus({ state: "error", message: "Please check the highlighted fields.", fields: body?.fields ?? {} });
+    else if (status === 429) {
+      setStatus({
+        state: "error",
+        message: "Too many attempts from this connection. Please wait a few minutes and try again, or call us.",
+        fields: {},
+      });
+    } else return false;
+    return true;
+  }
+
+  // Step 1: check the details and show the certificate as it will be printed. Nothing is saved yet.
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const form = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
     // The friends go as a list whose indexes match the form, so errors land on the right field.
     const data = Object.fromEntries(Object.entries(form).filter(([k]) => !k.startsWith("referrals.")));
-    const referrals = friends.map(({ name, phone, college }) => ({ name, phone, college }));
-    const referred = friends.filter(isFilled).length;
+    const payload = {
+      ...data,
+      sessionId: Number(data.sessionId),
+      consent: data.consent === "on",
+      referrals: friends.map(({ name, phone, college }) => ({ name, phone, college })),
+      referralConsent: data.referralConsent === "on",
+    };
+    const session = sessions.state === "ready" ? sessions.list.find((s) => s.id === payload.sessionId) : undefined;
     setStatus({ state: "sending" });
     try {
-      const res = await fetch(`${site.apiUrl}/api/public/certificate-registrations`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...data,
-          sessionId: Number(data.sessionId),
-          consent: data.consent === "on",
-          referrals,
-          referralConsent: data.referralConsent === "on",
-        }),
-      });
-      const body = (await res.json().catch(() => null)) as {
-        certificate?: IssuedCertificate;
-        emailing?: boolean;
-        fields?: Record<string, string>;
-        emailed?: boolean;
-        verification?: Verification;
-      } | null;
+      const res = await post({ ...payload, preview: true });
+      if (res.ok && res.headers.get("Content-Type")?.startsWith("application/pdf")) {
+        const details: [string, string][] = [
+          ["Name", data.name.trim()],
+          ["College", data.college.trim()],
+        ];
+        if (session) details.push(["Session", session.title], ["Session date", formatDate(session.date)]);
+        setStatus({
+          state: "preview",
+          pdf: await res.arrayBuffer(),
+          payload,
+          details,
+          email: data.email.trim(),
+          referred: friends.length,
+          confirming: false,
+          error: null,
+        });
+        return;
+      }
+      if (settled(res.status, await res.json().catch(() => null))) return;
+      throw new Error(`Unexpected status ${res.status}`);
+    } catch {
+      setStatus({ state: "error", message: NOT_SENT, fields: {} });
+    }
+  }
+
+  // Step 2: issue the certificate the student has checked.
+  async function confirm(preview: Preview) {
+    setStatus({ ...preview, confirming: true, error: null });
+    try {
+      const res = await post(preview.payload);
+      const body = (await res.json().catch(() => null)) as Answer;
       if (res.status === 201 && body?.certificate) {
         setStatus({
           state: "issued",
           certificate: body.certificate,
-          emailedTo: body.emailing ? data.email.trim() : null,
+          emailedTo: body.emailing ? preview.email : null,
           verification: body.verification ?? null,
-          referred,
+          referred: preview.referred,
         });
         return;
       }
-      if (res.status === 409) {
-        setStatus({ state: "already", emailed: Boolean(body?.emailed) });
-        return;
-      }
-      if (res.status === 400) {
-        setStatus({ state: "error", message: "Please check the highlighted fields.", fields: body?.fields ?? {} });
-        return;
-      }
-      if (res.status === 429) {
-        setStatus({
-          state: "error",
-          message: "Too many attempts from this connection. Please wait a few minutes and try again, or call us.",
-          fields: {},
-        });
-        return;
-      }
+      if (settled(res.status, body)) return;
       throw new Error(`Unexpected status ${res.status}`);
     } catch {
-      setStatus({ state: "error", message: "That didn't go through. Please try again, or call us.", fields: {} });
+      setStatus({ ...preview, confirming: false, error: NOT_SENT });
     }
   }
 
@@ -249,115 +347,124 @@ export function CertificateForm() {
       ? String(sessions.list[0].id)
       : "";
 
+  // The form stays in the page (hidden) during the preview, so "Edit details" returns to what was typed.
   return (
-    <FormGrid onSubmit={onSubmit}>
-      <Field id={`${uid}-sessionId`} label="Session you attended" error={errors.sessionId} wide>
-        <select {...bind("sessionId")} required defaultValue={preselected}>
-          <option value="" disabled>
-            Select the session
-          </option>
-          {sessions.list.map((s) => (
-            <option key={s.id} value={s.id}>
-              {sessionLabel(s)}
-            </option>
-          ))}
-        </select>
-      </Field>
+    <>
+      {status.state === "preview" && (
+        <PreviewStep preview={status} onConfirm={() => confirm(status)} onEdit={() => setStatus({ state: "idle" })} />
+      )}
+      <div hidden={status.state === "preview"}>
+        <FormGrid onSubmit={onSubmit}>
+          <Field id={`${uid}-sessionId`} label="Session you attended" error={errors.sessionId} wide>
+            <select {...bind("sessionId")} required defaultValue={preselected}>
+              <option value="" disabled>
+                Select the session
+              </option>
+              {sessions.list.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {sessionLabel(s)}
+                </option>
+              ))}
+            </select>
+          </Field>
 
-      <Field
-        id={`${uid}-code`}
-        label="Session code"
-        hint="Announced at the end of the session."
-        error={errors.code}
-        wide
-      >
-        <input
-          {...bind("code", { hint: true })}
-          type="text"
-          required
-          minLength={4}
-          maxLength={12}
-          autoComplete="off"
-          autoCapitalize="characters"
-          spellCheck={false}
-          className="field font-mono uppercase tracking-[0.3em]"
-        />
-      </Field>
+          <Field
+            id={`${uid}-code`}
+            label="Session code"
+            hint="Announced at the end of the session."
+            error={errors.code}
+            wide
+          >
+            <input
+              {...bind("code", { hint: true })}
+              type="text"
+              required
+              minLength={4}
+              maxLength={12}
+              autoComplete="off"
+              autoCapitalize="characters"
+              spellCheck={false}
+              className="field font-mono uppercase tracking-[0.3em]"
+            />
+          </Field>
 
-      <Field
-        id={`${uid}-name`}
-        label="Name on certificate"
-        hint="In English letters, exactly as it should be printed."
-        error={errors.name}
-        wide
-      >
-        <input {...bind("name", { hint: true })} type="text" required minLength={2} maxLength={80} autoComplete="name" />
-      </Field>
+          <Field
+            id={`${uid}-name`}
+            label="Name on certificate"
+            hint="In English letters, exactly as it should be printed."
+            error={errors.name}
+            wide
+          >
+            <input {...bind("name", { hint: true })} type="text" required minLength={2} maxLength={80} autoComplete="name" />
+          </Field>
 
-      <Field id={`${uid}-email`} label="Email" error={errors.email}>
-        <input {...bind("email")} type="email" required maxLength={254} autoComplete="email" />
-      </Field>
-      <Field id={`${uid}-phone`} label="Mobile number" error={errors.phone}>
-        <input {...bind("phone")} type="tel" required inputMode="tel" maxLength={20} autoComplete="tel" placeholder="10-digit mobile" />
-      </Field>
+          <Field id={`${uid}-email`} label="Email" error={errors.email}>
+            <input {...bind("email")} type="email" required maxLength={254} autoComplete="email" />
+          </Field>
+          <Field id={`${uid}-phone`} label="Mobile number" error={errors.phone}>
+            <input {...bind("phone")} type="tel" required inputMode="tel" maxLength={20} autoComplete="tel" placeholder="10-digit mobile" />
+          </Field>
 
-      <Field
-        id={`${uid}-college`}
-        label="College"
-        hint="In English letters, as it may be printed on the certificate."
-        error={errors.college}
-        wide
-      >
-        <input {...bind("college", { hint: true })} type="text" required maxLength={150} autoComplete="organization" />
-      </Field>
+          <Field
+            id={`${uid}-college`}
+            label="College"
+            hint="In English letters, as it may be printed on the certificate."
+            error={errors.college}
+            wide
+          >
+            <input {...bind("college", { hint: true })} type="text" required maxLength={150} autoComplete="organization" />
+          </Field>
 
-      <Field id={`${uid}-stream`} label="Stream" optional error={errors.stream}>
-        <select {...bind("stream")} defaultValue="">
-          <option value="">Select</option>
-          {STREAMS.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <Field id={`${uid}-yearOfStudy`} label="Year of study" optional error={errors.yearOfStudy}>
-        <select {...bind("yearOfStudy")} defaultValue="">
-          <option value="">Select</option>
-          {YEARS_OF_STUDY.map((y) => (
-            <option key={y.id} value={y.id}>
-              {y.label}
-            </option>
-          ))}
-        </select>
-      </Field>
+          <Field id={`${uid}-stream`} label="Stream" optional error={errors.stream}>
+            <select {...bind("stream")} defaultValue="">
+              <option value="">Select</option>
+              {STREAMS.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.label}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field id={`${uid}-yearOfStudy`} label="Year of study" optional error={errors.yearOfStudy}>
+            <select {...bind("yearOfStudy")} defaultValue="">
+              <option value="">Select</option>
+              {YEARS_OF_STUDY.map((y) => (
+                <option key={y.id} value={y.id}>
+                  {y.label}
+                </option>
+              ))}
+            </select>
+          </Field>
 
-      <ReferFriends
-        uid={uid}
-        friends={friends}
-        errors={errors}
-        onChange={(i, patch) => setFriends((list) => list.map((f, j) => (j === i ? { ...f, ...patch } : f)))}
-        onAdd={() => setFriends((list) => [...list, { key: nextKey.current++, name: "", phone: "", college: "" }])}
-        onRemove={(i) => setFriends((list) => list.filter((_, j) => j !== i))}
-      />
+          <ReferFriends
+            uid={uid}
+            friends={friends}
+            errors={errors}
+            onChange={(i, patch) => setFriends((list) => list.map((f, j) => (j === i ? { ...f, ...patch } : f)))}
+            onAdd={() => setFriends((list) => [...list, { key: nextKey.current++, name: "", phone: "", college: "" }])}
+            onRemove={(i) => setFriends((list) => list.filter((_, j) => j !== i))}
+          />
 
-      <Honeypot uid={uid} />
+          <Honeypot uid={uid} />
 
-      <Consent error={errors.consent}>
-        I agree that Sloka Academy may keep these details to issue, email and verify my certificate. Anyone with my
-        certificate ID can confirm my name, the session and its date. See the
-      </Consent>
+          <Consent error={errors.consent}>
+            I agree that Sloka Academy may keep these details to issue, email and verify my certificate. Anyone with my
+            certificate ID can view the certificate and confirm my name, the session and its date. See the
+          </Consent>
 
-      {status.state === "error" && <FormError message={status.message} />}
+          {status.state === "error" && <FormError message={status.message} />}
 
-      <SubmitButton sending={status.state === "sending"} label="Get my certificate" sendingLabel="Issuing…" />
-    </FormGrid>
+          <SubmitButton sending={status.state === "sending"} label="Preview my certificate" sendingLabel="Preparing your preview…" />
+        </FormGrid>
+      </div>
+    </>
   );
 }
 
 /**
- * "Refer a friend": up to three friends from other colleges whom admissions can invite to upcoming sessions.
- * Optional; rows left blank are ignored. Once a friend is filled in, the student confirms the friend agreed.
+ * "Refer a friend": one to three friends from other colleges whom admissions can invite to upcoming sessions.
+ * Every field is required, as is the student's confirmation that the friends agreed to be contacted.
+ * Referred friends become enquiries for the admissions team; they do not get a certificate.
  */
 function ReferFriends({
   uid,
@@ -387,7 +494,7 @@ function ReferFriends({
         Know someone at another college who would enjoy a session like this?
       </h3>
       <p className="mt-2 text-sm leading-relaxed text-muted">
-        Add up to {MAX_FRIENDS} friends and we will invite them to our upcoming sessions. This is optional.
+        Refer at least one friend (up to {MAX_FRIENDS}) and we will invite them to our upcoming sessions.
       </p>
 
       <div className="mt-6 grid gap-6">
@@ -413,13 +520,13 @@ function ReferFriends({
                 </div>
               )}
               <Field id={`${uid}-referrals.${i}.name`} label="Friend's full name" error={errors[`referrals.${i}.name`]}>
-                <input {...bind("name")} type="text" maxLength={100} autoComplete="off" />
+                <input {...bind("name")} type="text" required minLength={2} maxLength={100} autoComplete="off" />
               </Field>
               <Field id={`${uid}-referrals.${i}.phone`} label="Friend's mobile number" error={errors[`referrals.${i}.phone`]}>
-                <input {...bind("phone")} type="tel" inputMode="tel" maxLength={20} autoComplete="off" placeholder="10-digit mobile" />
+                <input {...bind("phone")} type="tel" required inputMode="tel" maxLength={20} autoComplete="off" placeholder="10-digit mobile" />
               </Field>
               <Field id={`${uid}-referrals.${i}.college`} label="Friend's college" error={errors[`referrals.${i}.college`]} wide>
-                <input {...bind("college")} type="text" maxLength={150} autoComplete="off" />
+                <input {...bind("college")} type="text" required minLength={2} maxLength={150} autoComplete="off" />
               </Field>
             </div>
           );
@@ -432,26 +539,24 @@ function ReferFriends({
         </button>
       )}
 
-      {friends.some(isFilled) && (
-        <div className="mt-6 border-t border-line pt-6">
-          <label className="flex cursor-pointer items-start gap-3 text-sm leading-relaxed text-muted">
-            <input
-              type="checkbox"
-              name="referralConsent"
-              required
-              aria-invalid={consentError ? true : undefined}
-              aria-describedby={consentError ? `${uid}-referralConsent-error` : undefined}
-              className="check mt-px"
-            />
-            <span>My friends know I am sharing their details and agree that Sloka Academy may contact them about its sessions.</span>
-          </label>
-          {consentError && (
-            <p id={`${uid}-referralConsent-error`} className="field-error pl-8">
-              {consentError}
-            </p>
-          )}
-        </div>
-      )}
+      <div className="mt-6 border-t border-line pt-6">
+        <label className="flex cursor-pointer items-start gap-3 text-sm leading-relaxed text-muted">
+          <input
+            type="checkbox"
+            name="referralConsent"
+            required
+            aria-invalid={consentError ? true : undefined}
+            aria-describedby={consentError ? `${uid}-referralConsent-error` : undefined}
+            className="check mt-px"
+          />
+          <span>My friends know I am sharing their details and agree that Sloka Academy may contact them about its sessions.</span>
+        </label>
+        {consentError && (
+          <p id={`${uid}-referralConsent-error`} className="field-error pl-8">
+            {consentError}
+          </p>
+        )}
+      </div>
     </div>
   );
 }

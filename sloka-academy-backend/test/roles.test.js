@@ -2,7 +2,7 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startApp, addUser, login, client, postPublic, validInquiry, ALLOWED_ORIGIN } = require('./helpers');
+const { startApp, addUser, login, client, postPublic, validInquiry, referral, ALLOWED_ORIGIN } = require('./helpers');
 const { localDate } = require('../src/util');
 
 describe('manager role', () => {
@@ -23,7 +23,7 @@ describe('manager role', () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Origin: ALLOWED_ORIGIN },
       body: JSON.stringify({
-        sessionId: session.id, code: session.code, name: 'Priya Sharma', email: 'priya@example.com', phone: '9876543210', college: 'CVR', consent: true,
+        sessionId: session.id, code: session.code, name: 'Priya Sharma', email: 'priya@example.com', phone: '9876543210', college: 'CVR', consent: true, ...referral(),
       }),
     });
     assert.equal(reg.status, 201);

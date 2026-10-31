@@ -183,6 +183,16 @@ function createCertificateRepo(db, config) {
     return rows.map((s) => ({ id: s.id, title: s.title, date: s.session_date, venue: s.venue || '', mode: s.mode }));
   }
 
+  /** The template a new certificate for the session is printed on: the session's, else the default (null: built-in). */
+  async function templateFor(sessionId) {
+    const tpl = await db.get(
+      `SELECT (SELECT template_id FROM sessions WHERE id = ?) AS session_template,
+        (SELECT id FROM certificate_templates WHERE is_default = 1 AND archived = 0 ORDER BY id LIMIT 1) AS default_template`,
+      [sessionId],
+    );
+    return tpl.session_template || tpl.default_template || null;
+  }
+
   /** Raw row incl. code, only if the session is currently accepting registrations. */
   async function openSessionRow(id) {
     const s = await db.get('SELECT * FROM sessions WHERE id = ?', [id]);
@@ -279,12 +289,7 @@ function createCertificateRepo(db, config) {
       const t = now();
       const link = await linkStudent(db, v, { now: t, idPrefix: config.studentIdPrefix });
       const { studentId } = link;
-      const tpl = await db.get(
-        `SELECT (SELECT template_id FROM sessions WHERE id = ?) AS session_template,
-          (SELECT id FROM certificate_templates WHERE is_default = 1 AND archived = 0 ORDER BY id LIMIT 1) AS default_template`,
-        [sessionId],
-      );
-      const templateId = tpl.session_template || tpl.default_template || null;
+      const templateId = await templateFor(sessionId);
       const year = new Date().getFullYear();
       const { token, hash } = newDownloadToken();
       let id;
@@ -527,6 +532,7 @@ function createCertificateRepo(db, config) {
     listSessions,
     publicSessions,
     openSessionRow,
+    templateFor,
     createSession,
     updateSession,
     deleteSession,

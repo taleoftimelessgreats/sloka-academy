@@ -103,7 +103,10 @@ export const navLinks = [
   { href: "/contact/", label: "Contact" },
 ] as const;
 
-/** Career Guidance Program certificates. Footer only; the header keeps the live site's menu (share the form by session link or QR code). */
+/** The header's "Verify Certificate" button. */
+export const verifyLink = { href: "/verify/", label: "Verify Certificate" } as const;
+
+/** Career Guidance Program certificates, in the footer. The form itself is shared by session link or QR code. */
 export const certificateLinks = [
   { href: "/certificate/", label: "Career Guidance Certificate" },
   { href: "/verify/", label: "Verify a certificate" },

@@ -199,6 +199,8 @@ A few other cases:
 
 Staff create a **session** (title, date, venue, in-person/online, optional closing time, optional certificate design). Each session gets a 6-character code from an alphabet without look-alikes (no 0/O/1/I/L), or managers and admins set their own (6–20 letters/digits). The code is announced at the end of the session. A student who enters the correct code on the website gets their certificate **immediately**; there is no approval step.
 
+The website form works in two steps. First it sends the registration with `preview: true`: the server checks it exactly as it would a registration (fields, session, code, an earlier registration) and answers with the certificate as it would be printed, stamped **PREVIEW** and with `SLK-<year>-XXXXXXXX` in place of the ID. Nothing is stored. The student checks their name and confirms, and the form sends the same registration again without `preview`, which issues the certificate. The website then shows the issued certificate (`/certificates/:id/preview`) with the download button. The Verify page shows the same view of the certificate under a successful check (stamped REVOKED if it was withdrawn).
+
 After a successful registration the server, in the background:
 
 1. generates the PDF and **emails it as an attachment** (with a personal download link and the verify link) when SMTP is configured. Each registration records the email status: `sent`, `failed` (with the mail server's reason), `pending` or `off` (email not configured). Failed emails show on the Overview; staff can correct the address and send again, and managers and admins can resend all failed ones at once;
@@ -206,10 +208,11 @@ After a successful registration the server, in the background:
 
 ### Refer a friend
 
-The certificate form has an optional **Refer a friend** section: up to three friends from other colleges, each with a full name, mobile number and college. Each friend becomes a new enquiry with source **Referral** (status *New*) that points back at the registration (`inquiries.referred_by`), so the admissions team works them like any other lead: assign, follow up, note, filter by source and export.
+The certificate form has a required **Refer a friend** section: one to three friends from other colleges, each with a full name, mobile number and college (all required). Each friend becomes a new enquiry with source **Referral** (status *New*) that points back at the registration (`inquiries.referred_by`), so the admissions team works them like any other lead: assign, follow up, note, filter by source and export.
 
 - The student must confirm that their friends agreed to be contacted (`referralConsent: true`); that moment is the enquiry's consent time.
-- A friend's number must be a valid Indian mobile, different from the student's own and from the other friends'. Rows left completely blank are ignored. A repeat registration (409) adds no friends.
+- A friend's number must be a valid Indian mobile, different from the student's own and from the other friends'. A registration without a friend, or with a friend's field left empty, is refused (400). A repeat registration (409) adds no friends.
+- Referred friends get **no certificate** and no certificate ID: only the student who registered with the session code does.
 - Referred friends get **no student profile**: they have not filled in a form, so nothing is created or changed from what someone else typed. A profile is linked the usual way if staff later edit the friend's contact details or the friend registers themselves.
 - The registration's page lists the friends it referred with their status; each referral enquiry shows who referred them. The enquiries CSV has a **Referred by** column. Erasing the registration (or the student) keeps the friends' enquiries but removes the link to the student who referred them.
 
@@ -253,8 +256,9 @@ No Google library is used: the server POSTs JSON to the web app with `fetch` (`s
 | Route | Notes |
 |---|---|
 | `GET /api/public/sessions` | `200 {"sessions":[{"id","title","date","venue","mode"}]}`: sessions open for registration whose closing time (if any) is in the future, newest date first. The code is never included. |
-| `POST /api/public/certificate-registrations` | JSON ≤ 10 kb: `sessionId`, `code`, `name` (2–80, English/Latin-1 letters, space `.` `'` `-`), `email`, `phone` (same rule as enquiries), `college` (≤ 150), optional `stream`/`yearOfStudy`, `consent: true`, `website` honeypot. Optional `referrals`: up to 3 `{name, phone, college}` (see [Refer a friend](#refer-a-friend)) with `referralConsent: true`; errors are keyed `referrals.<index>.<field>`. |
+| `POST /api/public/certificate-registrations` | JSON ≤ 10 kb: `sessionId`, `code`, `name` (2–80, English/Latin-1 letters, space `.` `'` `-`), `email`, `phone` (same rule as enquiries), `college` (≤ 150), optional `stream`/`yearOfStudy`, `consent: true`, `website` honeypot. `referrals`: 1–3 `{name, phone, college}`, all required (see [Refer a friend](#refer-a-friend)), with `referralConsent: true`; errors are keyed `referrals.<index>.<field>`. With `preview: true` nothing is stored: `200 application/pdf` (inline, stamped PREVIEW) when everything checks out, otherwise the same 400/409/429 answers as a registration. |
 | `GET /api/public/certificates/:id/verify` | `200 {"id","status":"valid"\|"revoked","name","sessionTitle","sessionDate","issuedAt"}` or `404 {"error":"not_found"}`. The ID is case-insensitive. Limited to 60/min per IP. |
+| `GET /api/public/certificates/:id/preview` | The certificate as issued, for showing with a verification: `200 application/pdf` inline (stamped REVOKED if revoked), `404 {"error":"not_found"}`. No token: anyone with the ID can already verify it. Not counted as a download; shares the PDF rate limit. |
 | `GET /api/public/certificates/:id/pdf?token=…` | For plain navigation. `200 application/pdf` as an attachment, `Cache-Control: no-store`. A bad or missing token gives `404`; a revoked certificate gives `410` (plain text). Each student download is counted. |
 
 Registration responses:
@@ -324,7 +328,8 @@ TEST_DATABASE_URL='mysql://root:@127.0.0.1:4000/sloka?ssl=false' npm test
 - Profile verification and email: same details link without changes, different details wait (wrong, expired and resent codes, locking after 5 wrong codes), staff decisions and who may make them, staff edits, erasure of a profile others were waiting on, and the daily email limit (5 per address of any kind, failed sends not counted, daily reset, team notifications included).
 - Designs: layout validation, uploads (PDF, PNG, junk, empty pages, tiny images, oversized files), previews, the default and per-session designs, issued certificates keeping their design, archive/delete rules.
 - Google Sheets: web app URL parsing, and syncing through the real Apps Script source run against a fake spreadsheet (tabs and headers, back-fill, new rows, referred friends, plain-text values, no duplicates on resend), the wrong-secret, private-deployment and missing-URL errors and retry, and who may see the script.
-- Refer a friend: validation, referral enquiries linked to the registration without profiles, no duplicates on a repeat registration, the CSV column, and erasure.
+- Refer a friend: required friends and fields, referral enquiries linked to the registration without profiles or certificates, no duplicates on a repeat registration, the CSV column, and erasure.
+- Certificate previews: the PREVIEW PDF before issuing stores nothing and is checked like a registration; the issued certificate's view (also when revoked) and not found.
 
 ## Deploying on Vercel
 
