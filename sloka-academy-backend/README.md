@@ -67,8 +67,6 @@ Admins create everyone else under **Users** in the dashboard (managers can add c
 | `NODE_ENV` | | `production` turns on `Secure`/`__Host-` cookies and HSTS |
 | `TZ` | system | Set to `Asia/Kolkata` so "today", "overdue" and certificate dates follow Indian dates |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `NOTIFY_FROM` | | Outgoing email. With these five set, students are emailed their certificate PDF on registration. Port 465 uses implicit TLS; other ports require STARTTLS. For Google Workspace/Gmail use `smtp.gmail.com`, port `465`, and an [app password](https://support.google.com/accounts/answer/185833). |
-| `GOOGLE_SERVICE_ACCOUNT_FILE` | | Path (relative to this folder) to a Google service-account JSON key. Turns on Google Sheets sync; see [Google Sheets](#google-sheets). Keep the key out of git (`*.json` keys belong outside the repo or in `secrets/`). |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | | Alternative to the file: the JSON key itself (for hosts that only offer environment variables) |
 | `NOTIFY_TO` | | Team address(es) for new-enquiry emails (needs the five SMTP variables too) |
 | `NOTIFY_WEBHOOK_URL` | | Optional Slack/Google Chat incoming webhook for new enquiries. Receives `{"text": "..."}`. |
 | `CERT_ID_PREFIX` | `SLK` | Certificate ID prefix, 2–8 letters/digits: `SLK-2026-7K4M9Q2X` |
@@ -204,7 +202,16 @@ Staff create a **session** (title, date, venue, in-person/online, optional closi
 After a successful registration the server, in the background:
 
 1. generates the PDF and **emails it as an attachment** (with a personal download link and the verify link) when SMTP is configured. Each registration records the email status: `sent`, `failed` (with the mail server's reason), `pending` or `off` (email not configured). Failed emails show on the Overview; staff can correct the address and send again, and managers and admins can resend all failed ones at once;
-2. **appends a row to the Google Sheet** linked in Settings (see below).
+2. **appends a row to the Google Sheet** connected in Settings (see below).
+
+### Refer a friend
+
+The certificate form has an optional **Refer a friend** section: up to three friends from other colleges, each with a full name, mobile number and college. Each friend becomes a new enquiry with source **Referral** (status *New*) that points back at the registration (`inquiries.referred_by`), so the admissions team works them like any other lead: assign, follow up, note, filter by source and export.
+
+- The student must confirm that their friends agreed to be contacted (`referralConsent: true`); that moment is the enquiry's consent time.
+- A friend's number must be a valid Indian mobile, different from the student's own and from the other friends'. Rows left completely blank are ignored. A repeat registration (409) adds no friends.
+- Referred friends get **no student profile**: they have not filled in a form, so nothing is created or changed from what someone else typed. A profile is linked the usual way if staff later edit the friend's contact details or the friend registers themselves.
+- The registration's page lists the friends it referred with their status; each referral enquiry shows who referred them. The enquiries CSV has a **Referred by** column. Erasing the registration (or the student) keeps the friends' enquiries but removes the link to the student who referred them.
 
 The PDF is generated on demand from the database, so a name correction takes effect on the next download.
 
@@ -219,28 +226,34 @@ Managers and admins upload certificate artwork in **Settings → Certificate des
 
 ### Google Sheets
 
-Registrations are copied to a Google Sheet with a Google **service account** (a robot Google account the server signs in as). One-time setup:
+Registrations are copied to a Google Sheet through a small **Apps Script** that lives in the sheet itself. The script runs as the sheet's owner, so there is no Google Cloud project, service account or key file, and the sheet's sharing can stay **Restricted** to staff. (Link sharing does not help: Google's Sheets API never lets a server write to a sheet without signing in, whatever the sharing settings.) One-time setup, by an admin:
 
-1. In [Google Cloud Console](https://console.cloud.google.com/), create a project (or use an existing one) and **enable the Google Sheets API**.
-2. **IAM & Admin → Service accounts → Create service account** (no roles needed). Open it, **Keys → Add key → JSON**, and download the key file.
-3. Put the key file on the server outside the repository (or in an ignored folder) and set `GOOGLE_SERVICE_ACCOUNT_FILE=/path/to/key.json`, or paste the JSON into `GOOGLE_SERVICE_ACCOUNT_JSON`. Restart the server: it logs `Google Sheets: service account …`.
-4. In the portal, **Settings → Google Sheet** shows the service account's email. Open your Google Sheet, click **Share**, and add that email as an **Editor**.
-5. Paste the sheet's link into Settings and save. The portal checks access straight away.
+1. In the portal, open **Settings → Google Sheet** and click **Copy script**. The script contains a secret the server generated; only admins can see it.
+2. Open the Google Sheet, then **Extensions → Apps Script**. Replace the code there with the script.
+3. **Deploy → New deployment → Select type: Web app**. Set **Execute as: Me** and **Who has access: Anyone**, then **Deploy** and allow access. (Google may warn that the app isn't verified: it is your own script, so choose **Advanced → Go to …**.)
+4. Copy the **Web app URL** (it ends in `/exec`) into Settings and click **Connect**. The portal checks it straight away and shows the sheet's name.
 
-The server creates a **Career Guidance Registrations** tab with a header row and appends one row per registration: submitted at, certificate ID, name on certificate, email, phone (10 digits), college, stream, year of study, session, session date, venue, mode and student ID. Values are written as plain text (`RAW`), so nothing is interpreted as a formula.
+"Anyone" means anyone can *call* the web app, but the script refuses every request without the secret, and the secret travels in the request body, never in the URL. If you edit the script later, deploy it again with **Deploy → Manage deployments → Edit → Version: New version**; the URL stays the same.
 
-- Registrations made before a sheet is linked are copied when it is linked. Linking a **different** sheet copies everything to the new sheet too.
-- New registrations are copied within a couple of seconds. Rows that fail (sheet not shared, Google unavailable) are retried every minute; after a permission error the server waits 10 minutes between automatic retries. **Sync now** retries immediately. Settings shows the last sync, rows waiting and the last error.
+The script keeps two tabs, each with a header row:
+
+- **Career Guidance Registrations**: one row per registration (submitted at, certificate ID, name on certificate, email, phone (10 digits), college, stream, year of study, session, session date, venue, mode, student ID).
+- **Referrals**: one row per friend a student referred (referred at, the friend's name, phone and college, who referred them with their phone and college, their certificate ID, the session, and the enquiry ID in the portal).
+
+Every value is written as plain text, so nothing is interpreted as a formula, number or date. The script skips rows whose certificate ID (or enquiry ID) is already in the tab, so a retry never duplicates a row.
+
+- Registrations made before a sheet is connected are copied when it is connected. The script reports which spreadsheet it belongs to, and rows are tracked per spreadsheet: moving the script to a **different** sheet copies everything there too, and reconnecting the same sheet sends nothing twice. A sheet filled by the earlier service-account version continues where it left off.
+- New registrations are copied within a couple of seconds. Rows that fail (Google unavailable, wrong secret, web app not shared with "Anyone") are retried; after a configuration error the server waits 10 minutes between automatic retries. **Sync now** retries immediately. Settings shows the last sync, rows waiting and the last error, with what to fix.
 - Rows are only ever **added**. Corrections, revocations and deletions made in the portal are not written back to the sheet. When a student asks for their data to be deleted, delete their rows in the sheet as well.
 
-No Google client library is used: the server signs the service-account JWT with Node's `crypto` and calls the Sheets REST API with `fetch`.
+No Google library is used: the server POSTs JSON to the web app with `fetch` (`src/sheets.js`, which also holds the script's source).
 
 ### Public certificate API (website)
 
 | Route | Notes |
 |---|---|
 | `GET /api/public/sessions` | `200 {"sessions":[{"id","title","date","venue","mode"}]}`: sessions open for registration whose closing time (if any) is in the future, newest date first. The code is never included. |
-| `POST /api/public/certificate-registrations` | JSON ≤ 10 kb: `sessionId`, `code`, `name` (2–80, English/Latin-1 letters, space `.` `'` `-`), `email`, `phone` (same rule as enquiries), `college` (≤ 150), optional `stream`/`yearOfStudy`, `consent: true`, `website` honeypot. |
+| `POST /api/public/certificate-registrations` | JSON ≤ 10 kb: `sessionId`, `code`, `name` (2–80, English/Latin-1 letters, space `.` `'` `-`), `email`, `phone` (same rule as enquiries), `college` (≤ 150), optional `stream`/`yearOfStudy`, `consent: true`, `website` honeypot. Optional `referrals`: up to 3 `{name, phone, college}` (see [Refer a friend](#refer-a-friend)) with `referralConsent: true`; errors are keyed `referrals.<index>.<field>`. |
 | `GET /api/public/certificates/:id/verify` | `200 {"id","status":"valid"\|"revoked","name","sessionTitle","sessionDate","issuedAt"}` or `404 {"error":"not_found"}`. The ID is case-insensitive. Limited to 60/min per IP. |
 | `GET /api/public/certificates/:id/pdf?token=…` | For plain navigation. `200 application/pdf` as an attachment, `Cache-Control: no-store`. A bad or missing token gives `404`; a revoked certificate gives `410` (plain text). Each student download is counted. |
 
@@ -282,8 +295,9 @@ The team is **not** notified about certificate registrations.
 | `PUT /api/templates/default` | manager | `{id}`, or `{id: null}` for the built-in design |
 | `POST /api/templates/preview` | manager | `{templateId?, layout?}` → sample certificate PDF (unsaved layouts allowed) |
 | `DELETE /api/templates/:id` | admin | `409 in_use` if certificates or sessions use it (archive instead) |
-| `GET /api/settings` | manager | Google Sheet status (service account, link, rows waiting, last sync/error) and email status |
-| `PUT /api/settings/google-sheet` | admin | `{url}` (empty clears it). Returns `check: {ok, title}` or `{ok: false, message}`. |
+| `GET /api/settings` | manager | Google Sheet status (web app URL, sheet name and link, rows waiting, last sync/error) and email status |
+| `GET /api/settings/google-sheet/script` | admin | `{script}`: the Apps Script to paste into the sheet (contains the shared secret) |
+| `PUT /api/settings/google-sheet` | admin | `{url}`: the web app URL ending in `/exec` (empty disconnects). Returns `check: {ok, title}` or `{ok: false, message}`. |
 | `POST /api/settings/google-sheet/test` · `POST /api/settings/google-sheet/sync` | manager | Check access; copy waiting rows now |
 
 `GET /api/stats` returns `certificates`: `openSessions`, `registrationsThisWeek` (since Monday, server time), `issuedTotal` (all-time, including revoked), `revoked`, `emailed`, `emailFailed`, `emailPending` and `recent` activity.
@@ -309,7 +323,8 @@ TEST_DATABASE_URL='mysql://root:@127.0.0.1:4000/sloka?ssl=false' npm test
 - Students: matching across sessions and enquiries (by email and by phone), Student IDs, programme tags, filters, profile edits, CSV export, erasure, the database's own rules (roles, one profile per email and per number), and the SQLite import.
 - Profile verification and email: same details link without changes, different details wait (wrong, expired and resent codes, locking after 5 wrong codes), staff decisions and who may make them, staff edits, erasure of a profile others were waiting on, and the daily email limit (5 per address of any kind, failed sends not counted, daily reset, team notifications included).
 - Designs: layout validation, uploads (PDF, PNG, junk, empty pages, tiny images, oversized files), previews, the default and per-session designs, issued certificates keeping their design, archive/delete rules.
-- Google Sheets: link parsing, the signed service-account JWT, syncing against a fake Google API (tab and header creation, back-fill, new rows, plain-text values, token reuse) and the "not shared" error and retry.
+- Google Sheets: web app URL parsing, and syncing through the real Apps Script source run against a fake spreadsheet (tabs and headers, back-fill, new rows, referred friends, plain-text values, no duplicates on resend), the wrong-secret, private-deployment and missing-URL errors and retry, and who may see the script.
+- Refer a friend: validation, referral enquiries linked to the registration without profiles, no duplicates on a repeat registration, the CSV column, and erasure.
 
 ## Deploying on Vercel
 
@@ -354,6 +369,7 @@ How it behaves on Vercel:
 - Only the fields listed above are stored. IP addresses and user agents are **not** stored. IPs are held in memory only, for up to 15 minutes, for rate limiting.
 - Access is limited to logged-in staff, and admin-only actions are enforced on the server.
 - Admins can permanently delete an enquiry and its notes, a certificate registration and its activity log, or a whole student with everything linked to them, on request. Remember that the database's backups (TiDB Cloud keeps them for its retention period), the former SQLite file, and rows already copied to the Google Sheet still contain the data.
-- Registrations are copied to Google Sheets and certificates are sent through your email provider; both are third-party processors. Share the sheet only with staff who need it.
+- Registrations and referred friends are copied to Google Sheets and certificates are sent through your email provider; both are third-party processors. Keep the sheet's sharing Restricted to staff who need it (the Apps Script does not need link sharing), and keep the script's secret private.
+- Referred friends did not give their details themselves. The form asks the student to confirm each friend agreed; admissions should say who referred them when they call and delete the details of anyone who doesn't want to be contacted.
 - The public verification endpoint reveals only the name, session, issue date and status of a certificate. It never reveals email, phone or college.
 - Requirements under India's **Digital Personal Data Protection Act, 2023** (notice wording, retention periods, grievance contact, breach reporting and so on) should be confirmed with a legal adviser. This software does not by itself make you compliant.

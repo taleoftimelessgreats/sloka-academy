@@ -1,12 +1,13 @@
 'use strict';
 
 const express = require('express');
-const { parseSheetUrl } = require('../sheets');
+const { parseWebAppUrl, isTestDeploymentUrl } = require('../sheets');
 const { validationError } = require('../util');
 
-/** Managers and admins: integrations (Google Sheet link and sync, email status). */
+/** Managers and admins: integrations (Google Sheet connection and sync, email status). */
 function settingsRouter({ config, sheetSync, delivery, auth }) {
   const router = express.Router();
+  const exporter = auth.requirePermission('export');
 
   const status = async () => ({
     googleSheet: await sheetSync.status(),
@@ -17,23 +18,38 @@ function settingsRouter({ config, sheetSync, delivery, auth }) {
     },
   });
 
+  const requireSheet = async () => {
+    if (!(await sheetSync.status()).configured) throw validationError({ url: 'Connect a sheet first: save its web app URL.' });
+  };
+
   router.get('/', async (req, res) => {
     res.json(await status());
   });
 
-  // Save (or clear) the Google Sheet that registrations are copied to. A new sheet receives every
+  // The Apps Script for the sheet. It holds the secret that lets the portal add rows, so only those who
+  // may export student data see it.
+  router.get('/google-sheet/script', exporter, async (req, res) => {
+    res.json({ script: await sheetSync.script() });
+  });
+
+  // Save (or clear) the Apps Script web app that registrations are sent to. A new sheet receives every
   // registration, so choosing it counts as exporting student data.
-  router.put('/google-sheet', auth.requirePermission('export'), async (req, res) => {
+  router.put('/google-sheet', exporter, async (req, res) => {
     const raw = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
-    if (raw && !parseSheetUrl(raw)) {
-      throw validationError({ url: 'Paste the link of a Google Sheet, like https://docs.google.com/spreadsheets/d/…/edit' });
-    }
     if (raw.length > 500) throw validationError({ url: 'That link is too long.' });
-    await sheetSync.setSheet(raw, req.user.id);
+    const url = raw ? parseWebAppUrl(raw) : '';
+    if (url === null) {
+      throw validationError({
+        url: isTestDeploymentUrl(raw)
+          ? 'That is the test URL (ending in /dev). Use the Web app URL ending in /exec from Deploy → Manage deployments.'
+          : 'Paste the Web app URL from Apps Script (Deploy → Manage deployments), like https://script.google.com/macros/s/…/exec',
+      });
+    }
+    await sheetSync.setWebApp(url, req.user.id);
     let check = null;
-    if (raw && sheetSync.configured()) {
+    if (url) {
       try {
-        check = { ok: true, title: (await sheetSync.test(parseSheetUrl(raw))).title };
+        check = { ok: true, title: (await sheetSync.test()).title };
         sheetSync.schedule(0);
       } catch (err) {
         check = { ok: false, message: err.message };
@@ -43,10 +59,9 @@ function settingsRouter({ config, sheetSync, delivery, auth }) {
   });
 
   router.post('/google-sheet/test', async (req, res) => {
-    const id = (await sheetSync.status()).sheetId;
-    if (!id) throw validationError({ url: 'Save a Google Sheet link first.' });
+    await requireSheet();
     try {
-      const { title } = await sheetSync.test(id);
+      const { title } = await sheetSync.test();
       res.json({ ok: true, title });
     } catch (err) {
       res.json({ ok: false, message: err.message });
@@ -54,8 +69,7 @@ function settingsRouter({ config, sheetSync, delivery, auth }) {
   });
 
   router.post('/google-sheet/sync', async (req, res) => {
-    if (!sheetSync.configured()) return res.status(400).json({ error: 'not_connected', message: 'Google Sheets is not connected on the server.' });
-    if (!(await sheetSync.status()).sheetId) throw validationError({ url: 'Save a Google Sheet link first.' });
+    await requireSheet();
     try {
       const { synced } = await sheetSync.syncNow();
       return res.json({ ok: true, synced, ...(await status()) });

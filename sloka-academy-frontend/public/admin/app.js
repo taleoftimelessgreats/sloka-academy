@@ -507,8 +507,7 @@
     const statusLine = (name, ok, text, href) =>
       h('div', { class: 'status-line' }, h('span', { class: ok ? 'dot dot-ok' : 'dot dot-off' }), h('span', { class: 'status-name' }, name), can('manage') && href ? h('a', { href }, text) : h('span', { class: 'muted' }, text));
     let sheetText;
-    if (!sys.sheet.connected) sheetText = 'Not connected on the server';
-    else if (!sys.sheet.configured) sheetText = 'No sheet linked yet';
+    if (!sys.sheet.configured) sheetText = 'No sheet connected yet';
     else if (sys.sheet.lastError) sheetText = 'Sync failing, see Settings';
     else sheetText = sys.sheet.pending ? `${sys.sheet.pending} waiting to sync` : `Up to date${sys.sheet.lastSyncAt ? ` (${fmtDateTime(sys.sheet.lastSyncAt)})` : ''}`;
     const systemCard = h(
@@ -516,7 +515,7 @@
       { class: 'card' },
       h('h2', null, 'Certificate delivery'),
       statusLine('Email to students', sys.emailEnabled, sys.emailEnabled ? 'On: the PDF is emailed on registration' : 'Off: students download only', '#/settings'),
-      statusLine('Google Sheet', sys.sheet.configured && sys.sheet.connected && !sys.sheet.lastError, sheetText, '#/settings'),
+      statusLine('Google Sheet', sys.sheet.configured && !sys.sheet.lastError, sheetText, '#/settings'),
       statusLine('Certificate design', true, sys.defaultTemplate || 'Built-in Sloka design', '#/settings'),
     );
 
@@ -666,7 +665,7 @@
         td('Phone', h('span', { class: 'nowrap' }, i.phone), i.email ? h('span', { class: 'sub' }, i.email) : null),
         td('Stream', label('stream', i.stream) || h('span', { class: 'muted' }, '—'), i.domain ? h('span', { class: 'sub' }, i.domain) : null),
         td('Plan', label('plan', i.plan) || h('span', { class: 'muted' }, '—')),
-        td('Source', label('source', i.source)),
+        td('Source', label('source', i.source), i.referredBy ? h('span', { class: 'sub' }, `by ${i.referredBy.name}`) : null),
         td('Status', statusBadge(i.status)),
         td('Assigned', i.assignedTo ? i.assignedTo.name : h('span', { class: 'muted' }, '—')),
         td('Follow-up', followUpCell(i)),
@@ -709,7 +708,7 @@
         can('export') ? h('a', { class: 'btn', href: `/api/inquiries/export?${query}`, download: '' }, 'Export CSV') : null,
         h('a', { class: 'btn btn-primary', href: '#/new' }, '+ Add enquiry'),
       ),
-      h('p', { class: 'muted lead' }, 'Internship Course Program pre-registrations, contact-form messages, brochure requests, calls and walk-ins. Each enquirer is also in Students.'),
+      h('p', { class: 'muted lead' }, 'Internship Course Program pre-registrations, contact-form messages, brochure requests, calls and walk-ins, plus friends referred on the career guidance certificate form. Each enquirer is also in Students, except referred friends (they did not fill in a form themselves).'),
       pipelineSummary(stats),
       filterForm,
       h('div', { class: 'card card-flush' }, h('div', { class: 'table-wrap' }, table)),
@@ -741,9 +740,16 @@
     add('Domain', inq.domain);
     add('Plan', label('plan', inq.plan));
     add('Source', label('source', inq.source));
+    const ref = inq.referredBy;
+    add(
+      'Referred by',
+      ref ? h('span', null, h('a', { href: `#/certificates/${ref.registrationId}` }, ref.name), ref.college ? ` · ${ref.college}` : '', ' · ', h('span', { class: 'mono' }, ref.certificateId)) : null,
+    );
     add('Brochure', inq.brochure);
-    add('Received', `${fmtDateTime(inq.createdAt)}${inq.createdBy ? ` · added by ${inq.createdBy.name}` : ' · website form'}`);
-    add('Consent given', fmtDateTime(inq.consentAt));
+    const via = inq.createdBy ? ` · added by ${inq.createdBy.name}` : inq.source === 'referral' ? ' · refer a friend (certificate form)' : ' · website form';
+    add('Received', `${fmtDateTime(inq.createdAt)}${via}`);
+    // A referred friend has not filled in a form: the student who referred them confirmed the friend agreed.
+    add(inq.source === 'referral' ? 'Referrer confirmed consent' : 'Consent given', fmtDateTime(inq.consentAt));
     add('Last updated', fmtDateTime(inq.updatedAt));
 
     const contact = h(
@@ -1741,9 +1747,44 @@
           { class: 'stack' },
           data.verification ? verificationPanel(data.verification, { reload, showRecord: false }) : null,
           h('section', { class: 'card' }, dl),
+          referralsCard(data.referrals || []),
           h('section', { class: 'card' }, h('h2', null, 'Activity'), timeline),
         ),
         h('div', { class: 'stack' }, actions, adminCards),
+      ),
+    );
+  }
+
+  // Friends the student named under "Refer a friend". Each one is an enquiry the admissions team follows up.
+  function referralsCard(friends) {
+    if (!friends.length) return null;
+    const td = (lbl, ...c) => h('td', { 'data-label': lbl }, ...c);
+    return h(
+      'section',
+      { class: 'card card-flush' },
+      h('h2', null, `Friends referred (${friends.length})`),
+      h(
+        'div',
+        { class: 'table-wrap' },
+        h(
+          'table',
+          { class: 'stackable' },
+          h('thead', null, h('tr', null, ['Friend', 'Phone', 'Status', 'Assigned'].map((t) => h('th', null, t)))),
+          h(
+            'tbody',
+            null,
+            friends.map((f) =>
+              h(
+                'tr',
+                null,
+                h('td', { class: 'primary', 'data-label': 'Friend' }, h('a', { class: 'name', href: `#/enquiries/${f.id}` }, f.name), f.college ? h('span', { class: 'sub' }, f.college) : null),
+                td('Phone', h('a', { class: 'nowrap', href: `tel:${f.phone}` }, f.phone)),
+                td('Status', statusBadge(f.status)),
+                td('Assigned', f.assignedTo || h('span', { class: 'muted' }, '—')),
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -2218,7 +2259,11 @@
   }
 
   async function viewSettings(stale) {
-    const [settings, designs] = await Promise.all([api('GET', '/api/settings'), api('GET', '/api/templates')]);
+    const [settings, designs, sheetScript] = await Promise.all([
+      api('GET', '/api/settings'),
+      api('GET', '/api/templates'),
+      can('export') ? api('GET', '/api/settings/google-sheet/script') : null,
+    ]);
     if (stale()) return;
     const reload = () => {
       const seq = state.seq;
@@ -2227,41 +2272,45 @@
     mount(
       'Settings',
       h('div', { class: 'page-head' }, h('h1', null, 'Settings')),
-      h('div', { class: 'stack' }, sheetCard(settings, reload), designsCard(designs, reload), emailCard(settings.email)),
+      h('div', { class: 'stack' }, sheetCard(settings, sheetScript && sheetScript.script, reload), designsCard(designs, reload), emailCard(settings.email)),
     );
   }
 
-  function sheetCard(settings, reload) {
+  function sheetCard(settings, script, reload) {
     const g = settings.googleSheet;
     const card = h('section', { class: 'card', id: 'google-sheet' }, h('h2', null, 'Google Sheet'));
-    card.append(h('p', { class: 'muted' }, `Every career guidance registration is added as a row to the “${g.tab}” tab of the sheet linked here. Registrations made before you link a sheet are copied across too.`));
-    if (!g.connected) {
-      card.append(
-        h(
-          'div',
-          { class: 'notice' },
-          h('strong', null, 'Not connected on the server. '),
-          g.keyError || 'Add a Google service-account key to the backend’s .env (GOOGLE_SERVICE_ACCOUNT_FILE) and restart it. The README explains the one-time setup.',
-        ),
+    card.append(
+      h(
+        'p',
+        { class: 'muted' },
+        `Every career guidance registration is added as a row to the “${g.tab}” tab of the sheet connected here, and every friend a student refers to the “${g.referralTab}” tab. Registrations made before you connect a sheet are copied across too.`,
+      ),
+    );
+    // Connecting a sheet sends it every registration, so only those who may export data see the script and can change it.
+    const canChange = can('export');
+    if (canChange) {
+      const code = h('textarea', { class: 'mono script-box', readOnly: true, rows: '8', spellcheck: 'false', 'aria-label': 'Apps Script code' });
+      code.value = script || '';
+      const steps = h(
+        'ol',
+        { class: 'steps' },
+        h('li', null, 'Open the Google Sheet. Its sharing can stay Restricted to your staff: the script does not need link sharing.'),
+        h('li', null, 'Click Extensions → Apps Script, delete the code that is there and paste this script: ', copyBtn(script || '', 'Copy script'), code),
+        h('li', null, 'Click Deploy → New deployment → Select type: Web app. Set Execute as: Me and Who has access: Anyone, then Deploy. Allow access when Google asks (if it says the app isn’t verified, click Advanced → Go to the project: it is your own script).'),
+        h('li', null, 'Copy the Web app URL (it ends in /exec) and paste it below.'),
       );
-    } else {
       card.append(
-        h(
-          'ol',
-          { class: 'steps' },
-          h('li', null, 'Open your Google Sheet, click Share, and add this address as an Editor: ', h('span', { class: 'row inline' }, h('span', { class: 'mono break' }, g.serviceAccountEmail), copyBtn(g.serviceAccountEmail))),
-          h('li', null, 'Copy the sheet’s link from the browser’s address bar and paste it below.'),
-        ),
+        g.configured
+          ? h('details', { class: 'more' }, h('summary', null, 'Set-up steps and script'), steps)
+          : steps,
       );
     }
-    // The linked sheet receives every registration, so only those who may export data can change it.
-    const canChange = can('export');
-    const url = h('input', { name: 'url', type: 'url', value: g.sheetUrl || '', placeholder: 'https://docs.google.com/spreadsheets/d/…/edit', autocomplete: 'off', readOnly: !canChange });
-    const save = canChange ? h('button', { class: 'btn btn-primary', type: 'submit' }, g.sheetUrl ? 'Update link' : 'Save link') : null;
+    const url = h('input', { name: 'url', type: 'url', value: g.webAppUrl || '', placeholder: 'https://script.google.com/macros/s/…/exec', autocomplete: 'off', readOnly: !canChange });
+    const save = canChange ? h('button', { class: 'btn btn-primary', type: 'submit' }, g.configured ? 'Update' : 'Connect') : null;
     const form = h(
       'form',
       { class: 'sheet-form', novalidate: true },
-      field('Google Sheet link', url, { name: 'url', hint: canChange ? null : 'Only admins can change the linked sheet.' }),
+      field('Web app URL', url, { name: 'url', hint: canChange ? null : 'Only admins can connect or change the sheet.' }),
       h('div', { class: 'form-actions' }, save, g.sheetUrl ? h('a', { class: 'btn', href: g.sheetUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Open sheet ↗') : null),
       h('p', { class: 'form-error', role: 'alert' }),
     );
@@ -2272,10 +2321,9 @@
       save.disabled = true;
       try {
         const r = await api('PUT', '/api/settings/google-sheet', { url: url.value.trim() });
-        if (!url.value.trim()) toast('Sheet link removed');
-        else if (!r.check) toast('Link saved. It will be used once Google Sheets is connected on the server.');
-        else if (r.check.ok) toast(`Linked to “${r.check.title}”. Registrations are being copied.`);
-        else toast(`Saved, but Google said: ${r.check.message}`, true);
+        if (!url.value.trim()) toast('Sheet disconnected');
+        else if (r.check && r.check.ok) toast(`Connected to “${r.check.title}”. Registrations are being copied.`);
+        else toast(`Saved, but the sheet did not answer: ${r.check ? r.check.message : 'unknown error'}`, true);
         setTimeout(reload, r.check && r.check.ok ? 1500 : 0);
       } catch (err) {
         showErrors(form, err);
@@ -2285,12 +2333,13 @@
     });
     card.append(form);
 
-    if (g.sheetId) {
+    if (g.configured) {
       const dl = h('dl', { class: 'info' });
+      if (g.sheetTitle) dl.append(h('dt', null, 'Sheet'), h('dd', null, g.sheetTitle));
       dl.append(h('dt', null, 'Last copied'), h('dd', null, g.lastSyncAt ? fmtDateTime(g.lastSyncAt) : 'Not yet'));
       dl.append(h('dt', null, 'Waiting'), h('dd', null, g.pending === null ? '—' : `${g.pending} ${g.pending === 1 ? 'registration' : 'registrations'}`));
       if (g.lastError) dl.append(h('dt', null, 'Problem'), h('dd', { class: 'error-text' }, `${g.lastError}${g.lastErrorAt ? ` (${fmtDateTime(g.lastErrorAt)})` : ''}`));
-      const test = h('button', { class: 'btn', type: 'button', disabled: !g.connected }, 'Test connection');
+      const test = h('button', { class: 'btn', type: 'button' }, 'Test connection');
       test.addEventListener('click', async () => {
         test.disabled = true;
         try {
@@ -2302,7 +2351,7 @@
           test.disabled = false;
         }
       });
-      const sync = h('button', { class: 'btn', type: 'button', disabled: !g.connected }, 'Sync now');
+      const sync = h('button', { class: 'btn', type: 'button' }, 'Sync now');
       sync.addEventListener('click', async () => {
         sync.disabled = true;
         try {
@@ -2310,7 +2359,7 @@
           toast(r.ok ? (r.synced ? `Copied ${r.synced} ${r.synced === 1 ? 'registration' : 'registrations'}` : 'Already up to date') : r.message, !r.ok);
           reload();
         } catch (err) {
-          toast(errorText(err), true);
+          toast(fieldMessage(err), true);
           sync.disabled = false;
         }
       });

@@ -61,8 +61,13 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications })
     return r;
   }
   const detail = async (id) => {
-    const [certificate, events, verification] = await Promise.all([load(id), certRepo.events(id), verifications.forRecord({ registrationId: id })]);
-    return { certificate, events, verification, verifyUrl: verifyLink(config.certVerifyUrl, certificate.certificateId), emailEnabled: canEmail() };
+    const [certificate, events, verification, referrals] = await Promise.all([
+      load(id),
+      certRepo.events(id),
+      verifications.forRecord({ registrationId: id }),
+      certRepo.referrals(id),
+    ]);
+    return { certificate, events, verification, referrals, verifyUrl: verifyLink(config.certVerifyUrl, certificate.certificateId), emailEnabled: canEmail() };
   };
 
   function filtersOrThrow(query) {

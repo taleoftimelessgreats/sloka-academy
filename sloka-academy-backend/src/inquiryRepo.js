@@ -31,11 +31,13 @@ const SORTS = {
 const CLOSED_SQL = C.CLOSED_STATUSES.map((s) => `'${s}'`).join(', '); // constants only, never user input
 
 const SELECT = `
-  SELECT i.*, au.name AS assigned_name, cu.name AS created_by_name, sx.student_code
+  SELECT i.*, au.name AS assigned_name, cu.name AS created_by_name, sx.student_code,
+    rr.name AS referrer_name, rr.college AS referrer_college, rr.certificate_id AS referrer_certificate_id
   FROM inquiries i
   LEFT JOIN users au ON au.id = i.assigned_to
   LEFT JOIN users cu ON cu.id = i.created_by
-  LEFT JOIN students sx ON sx.id = i.student_id`;
+  LEFT JOIN students sx ON sx.id = i.student_id
+  LEFT JOIN certificate_registrations rr ON rr.id = i.referred_by`;
 
 function toApi(row) {
   if (!row) return null;
@@ -61,6 +63,10 @@ function toApi(row) {
     updatedAt: row.updated_at,
     studentId: row.student_id ?? null,
     studentCode: row.student_code ?? null,
+    // Refer a friend: the certificate registration that named this person.
+    referredBy: row.referred_by
+      ? { registrationId: row.referred_by, name: row.referrer_name, college: row.referrer_college, certificateId: row.referrer_certificate_id }
+      : null,
   };
 }
 

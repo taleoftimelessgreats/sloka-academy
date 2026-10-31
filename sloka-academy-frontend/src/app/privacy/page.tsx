@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 // requirements under India's Digital Personal Data Protection Act (DPDP) with a legal adviser.
 export default function PrivacyPage() {
   return (
-    <PolicyPage title="Privacy Notice" updated="29 October 2026">
+    <PolicyPage title="Privacy Notice" updated="31 October 2026">
       {formsEnabled ? (
         <>
           <p>
@@ -41,18 +41,28 @@ export default function PrivacyPage() {
             staff see your full history with us.
           </p>
 
+          <h2>Referring a friend</h2>
+          <p>
+            The certificate form lets you refer up to three friends by giving each friend&rsquo;s name, mobile number
+            and college. Please do this only if your friend has agreed; you confirm that they have before sending the
+            form. Our admissions team uses these details only to contact your friend about upcoming {site.name}{" "}
+            sessions, and records that you referred them. If a friend does not want to hear from us, they can tell us
+            when we call, or email <a href={`mailto:${site.contact.email}`}>{site.contact.email}</a>, and we will
+            delete their details.
+          </p>
+
           <h2>Why we use it</h2>
           <p>
             Only for the purpose you gave it for: to respond to your enquiry (to call or email you, advise you on the
-            program and domains, and manage your pre-registration if you ask us to) or to issue and verify your
-            certificate. We do not sell your details or share them with other organisations for their marketing.
+            program and domains, and manage your pre-registration if you ask us to), to issue and verify your
+            certificate, or to invite a friend you referred to our sessions. We do not sell your details or share them with other organisations for their marketing.
           </p>
 
           <h2>Who can see it</h2>
           <p>
             Your details are stored in an internal system that only {site.name} staff can access, each with their own
-            login. Certificate registrations are also copied to a Google Sheet that only {site.name} staff can open,
-            and certificates are sent through our email provider.
+            login. Certificate registrations and referred friends are also copied to a Google Sheet that only{" "}
+            {site.name} staff can open, and certificates are sent through our email provider.
           </p>
           {/* CONFIRM with the legal adviser (DPDP review): name the email provider and Google as processors if required. */}
 

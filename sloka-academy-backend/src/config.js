@@ -114,10 +114,6 @@ function loadConfig(env = process.env) {
     notifyFrom: env.NOTIFY_FROM || '',
     notifyTo: env.NOTIFY_TO || '',
     notifyWebhookUrl: env.NOTIFY_WEBHOOK_URL || '',
-    // Google service account used to write registrations to the Google Sheet chosen in the dashboard.
-    // Either a path to the downloaded JSON key (relative to this folder) or the JSON itself.
-    googleServiceAccountFile: env.GOOGLE_SERVICE_ACCOUNT_FILE ? path.resolve(PROJECT_ROOT, env.GOOGLE_SERVICE_ACCOUNT_FILE.trim()) : '',
-    googleServiceAccountJson: (env.GOOGLE_SERVICE_ACCOUNT_JSON || '').trim(),
     sheetSyncIntervalMs: 60 * 1000, // retry pending rows this often
     // Uploaded certificate templates. Vercel refuses request bodies over 4.5 MB, so keep under that everywhere.
     templateMaxBytes: 4 * 1024 * 1024,

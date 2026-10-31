@@ -248,6 +248,7 @@ td select { width: auto; min-height: 28px; padding: 2px 6px; }
 .error-text { color: #ff6a6f; }
 .steps { margin: 0 0 14px; padding-left: 20px; }
 .steps li { margin: 6px 0; }
+.script-box { display: block; width: 100%; margin-top: 8px; font-size: 12px; white-space: pre; overflow: auto; }
 .row.inline { display: inline-flex; margin-left: 4px; vertical-align: middle; }
 .sheet-form { max-width: 720px; }
 .sync-status { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; margin: 16px 0 8px; padding-top: 14px; border-top: 1px solid var(--border); }

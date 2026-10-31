@@ -305,11 +305,43 @@ function createCertificateRepo(db, config) {
         }
       }
       await logEvent(id, 'registered', 'Registered and certificate issued', null);
+      await addReferrals(id, v.referrals || [], t);
       const verification = link.conflict
         ? await openVerification(db, { registrationId: id }, link.conflict.student.id, v, link.conflict.conflicts, t)
         : null;
       return { row: await regRow(id), token, verification };
     });
+  }
+
+  // Friends named under "Refer a friend" become new enquiries for the admissions team. They have not filled
+  // in a form themselves, so no student profile is created or changed from these details.
+  async function addReferrals(regId, friends, t) {
+    for (const f of friends) {
+      await db.run(
+        `INSERT INTO inquiries (name, phone, college, source, status, consent_at, created_at, updated_at, referred_by)
+        VALUES (?, ?, ?, 'referral', 'new', ?, ?, ?, ?)`,
+        [f.name, f.phone, f.college, t, t, t, regId],
+      );
+    }
+  }
+
+  /** The friends a registration referred, as their enquiries. */
+  async function referrals(regId) {
+    const rows = await db.all(
+      `SELECT i.id, i.name, i.phone, i.college, i.status, i.created_at, u.name AS assigned_name
+      FROM inquiries i LEFT JOIN users u ON u.id = i.assigned_to
+      WHERE i.referred_by = ? ORDER BY i.id`,
+      [regId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      phone: r.phone,
+      college: r.college,
+      status: r.status,
+      assignedTo: r.assigned_name ?? null,
+      createdAt: r.created_at,
+    }));
   }
 
   /** Replace the download token (old links stop working). Resolves to the new token. */
@@ -425,6 +457,8 @@ function createCertificateRepo(db, config) {
     return db.transaction(async () => {
       const row = await regRow(regId);
       await db.run('DELETE FROM certificate_events WHERE registration_id = ?', [regId]);
+      // The friends it referred stay as enquiries of their own; only the link to the erased student goes.
+      await db.run('UPDATE inquiries SET referred_by = NULL WHERE referred_by = ?', [regId]);
       const deleted = (await db.run('DELETE FROM certificate_registrations WHERE id = ?', [regId])).changes > 0;
       if (deleted && row) await pruneStudent(row.student_id);
       return deleted;
@@ -503,6 +537,7 @@ function createCertificateRepo(db, config) {
     findExistingRegistration,
     events,
     register,
+    referrals,
     rotateToken,
     recordEmailed,
     setEmailStatus,

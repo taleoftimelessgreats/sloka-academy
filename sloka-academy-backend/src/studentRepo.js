@@ -193,6 +193,7 @@ function createStudentRepo(db, { studentIdPrefix = 'SLK' } = {}) {
       const finishDetach = await detachFromStudent(db, id, studentIdPrefix);
       for (const regId of await regIds(id)) {
         await db.run('DELETE FROM certificate_events WHERE registration_id = ?', [regId]);
+        await db.run('UPDATE inquiries SET referred_by = NULL WHERE referred_by = ?', [regId]); // friends they referred stay
         await db.run('DELETE FROM certificate_registrations WHERE id = ?', [regId]);
       }
       for (const inqId of await inqIds(id)) {

@@ -1,11 +1,10 @@
 'use strict';
 
-const fs = require('node:fs');
 const crypto = require('node:crypto');
 
-const SCOPE = 'https://www.googleapis.com/auth/spreadsheets';
-const DEFAULT_TOKEN_URL = 'https://oauth2.googleapis.com/token';
-const API = 'https://sheets.googleapis.com/v4/spreadsheets';
+// Google Sheets through an Apps Script web app that lives in the spreadsheet itself. The script runs as
+// the sheet's owner, so the server needs no Google account, API key or service account: only the web
+// app's URL and a shared secret that the script checks on every request.
 
 class SheetsError extends Error {
   constructor(message, { status = 0, transient = false } = {}) {
@@ -15,149 +14,147 @@ class SheetsError extends Error {
   }
 }
 
-/**
- * Read the service-account key ({ client_email, private_key }) from GOOGLE_SERVICE_ACCOUNT_FILE or
- * GOOGLE_SERVICE_ACCOUNT_JSON. Returns null when neither is set; throws when the key is unusable.
- */
-function loadServiceAccount(config) {
-  let raw = config.googleServiceAccountJson;
-  if (!raw && config.googleServiceAccountFile) {
-    try {
-      raw = fs.readFileSync(config.googleServiceAccountFile, 'utf8');
-    } catch (err) {
-      throw new Error(`GOOGLE_SERVICE_ACCOUNT_FILE could not be read (${err.code || err.message}).`);
-    }
-  }
-  if (!raw) return null;
-  let key;
-  try {
-    key = JSON.parse(raw);
-  } catch {
-    throw new Error('The Google service-account key is not valid JSON. Use the JSON key file downloaded from Google Cloud.');
-  }
-  if (!key || typeof key.client_email !== 'string' || typeof key.private_key !== 'string') {
-    throw new Error('The Google service-account key must contain client_email and private_key.');
-  }
-  try {
-    crypto.createPrivateKey(key.private_key);
-  } catch {
-    throw new Error('The private_key in the Google service-account key is not a valid key.');
-  }
-  return { clientEmail: key.client_email, privateKey: key.private_key, tokenUrl: key.token_uri || DEFAULT_TOKEN_URL };
-}
+const NOT_FOUND_MSG = 'Google found no web app at this URL. In Apps Script, open Deploy → Manage deployments and copy the Web app URL again.';
+const NO_ANSWER_MSG =
+  "Google didn't pass the request to the script. In Apps Script, open Deploy → Manage deployments → Edit and check that “Who has access” is “Anyone” and that the script below was pasted in full; then deploy a new version.";
+const SECRET_MSG =
+  "The script in the sheet has a different secret. Copy the script from this page again, paste it over the old one, then Deploy → Manage deployments → Edit → Version: New version.";
 
-/** Spreadsheet ID from a Google Sheets link (or a bare ID). Returns null if it doesn't look like one. */
-function parseSheetUrl(input) {
+/**
+ * The URL of a deployed Apps Script web app (https://script.google.com/macros/s/<id>/exec, or the
+ * Google Workspace form …/a/macros/<domain>/s/<id>/exec), without query or fragment. Null otherwise.
+ */
+function parseWebAppUrl(input) {
   if (typeof input !== 'string') return null;
-  const v = input.trim();
-  if (/^[A-Za-z0-9_-]{25,100}$/.test(v)) return v;
   let u;
   try {
-    u = new URL(v);
+    u = new URL(input.trim());
   } catch {
     return null;
   }
-  if (u.protocol !== 'https:' || u.hostname !== 'docs.google.com') return null;
-  const m = u.pathname.match(/^\/spreadsheets\/(?:u\/\d+\/)?d\/([A-Za-z0-9_-]{25,100})(?:\/|$)/);
-  return m ? m[1] : null;
+  if (u.protocol !== 'https:' || u.hostname !== 'script.google.com' || u.port || u.username || u.password) return null;
+  return /^\/(?:a\/macros\/[A-Za-z0-9.-]{1,253}|macros)\/s\/[A-Za-z0-9_-]{20,200}\/exec$/.test(u.pathname) ? `${u.origin}${u.pathname}` : null;
 }
 
-const b64url = (buf) => Buffer.from(buf).toString('base64url');
+/** The test URL Apps Script shows under "Test deployments" (…/dev): it only works for the script's owner. */
+const isTestDeploymentUrl = (input) => typeof input === 'string' && /^https:\/\/script\.google\.com\/.*\/dev(?:[?#]|$)/.test(input.trim());
 
-/** RS256-signed JWT assertion for the OAuth 2.0 service-account flow. */
-function signAssertion(sa, nowSeconds) {
-  const header = b64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' }));
-  const claims = b64url(
-    JSON.stringify({ iss: sa.clientEmail, scope: SCOPE, aud: sa.tokenUrl, iat: nowSeconds, exp: nowSeconds + 3600 }),
-  );
-  const signature = crypto.sign('RSA-SHA256', Buffer.from(`${header}.${claims}`), sa.privateKey);
-  return `${header}.${claims}.${b64url(signature)}`;
+const newSecret = () => crypto.randomBytes(24).toString('base64url');
+
+/**
+ * The Apps Script source an admin pastes into the sheet (Extensions → Apps Script). It appends the rows it
+ * is sent, skipping any whose key (e.g. the certificate ID) is already in the tab, so a resend never
+ * duplicates a row. Every value is written as plain text: nothing becomes a formula, number or date.
+ */
+function appsScript(secret) {
+  if (!/^[A-Za-z0-9_-]+$/.test(secret)) throw new Error('invalid secret');
+  return `// Sloka Academy: copies career guidance registrations and referred friends into this spreadsheet.
+// Paste this into Extensions → Apps Script, then Deploy → New deployment → Web app
+// (Execute as: Me, Who has access: Anyone). Keep the secret private: it lets the portal add rows.
+const SECRET = '${secret}';
+
+function doPost(e) {
+  try {
+    const req = JSON.parse(e.postData.contents);
+    if (!req || !sameText(String(req.secret), SECRET)) return reply({ ok: false, error: 'bad_secret' });
+    const book = SpreadsheetApp.getActiveSpreadsheet();
+    if (req.action === 'append') {
+      const lock = LockService.getScriptLock();
+      lock.waitLock(30000);
+      try {
+        (req.tabs || []).forEach(function (tab) { addRows(book, tab); });
+        SpreadsheetApp.flush();
+      } finally {
+        lock.releaseLock();
+      }
+    }
+    return reply({ ok: true, spreadsheetId: book.getId(), title: book.getName(), url: book.getUrl() });
+  } catch (err) {
+    return reply({ ok: false, error: 'script_error', message: String((err && err.message) || err) });
+  }
 }
 
-const quoteTab = (title) => `'${title.replace(/'/g, "''")}'`;
+function addRows(book, tab) {
+  const sheet = book.getSheetByName(tab.name) || book.insertSheet(tab.name);
+  const width = tab.header.length;
+  // Write the header into an empty first row, or extend it when it is an older version of this header.
+  const first = sheet.getLastColumn() > 0 ? sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0] : [];
+  if (first.every(function (v, i) { return v === '' || v === tab.header[i]; })) {
+    sheet.getRange(1, 1, 1, width).setValues([tab.header]);
+  }
+  const last = sheet.getLastRow();
+  const seen = {};
+  if (last > 1) {
+    sheet.getRange(2, tab.key + 1, last - 1, 1).getDisplayValues().forEach(function (r) { seen[r[0]] = true; });
+  }
+  const rows = tab.rows.filter(function (r) {
+    const fresh = !seen[r[tab.key]];
+    seen[r[tab.key]] = true;
+    return fresh;
+  });
+  if (!rows.length) return;
+  // A leading apostrophe stores the value as plain text and is not shown in the cell.
+  sheet.getRange(last + 1, 1, rows.length, width).setValues(rows.map(function (r) {
+    return r.map(function (v) { return v === '' ? '' : "'" + v; });
+  }));
+}
 
-/** Minimal Google Sheets client: just what syncing registrations needs. */
-function createSheetsClient(sa, { fetchImpl = fetch, now = () => Date.now() } = {}) {
-  let token = null;
-  let tokenExpires = 0;
+function sameText(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
 
-  async function call(url, init, what) {
+function reply(body) {
+  return ContentService.createTextOutput(JSON.stringify(body)).setMimeType(ContentService.MimeType.JSON);
+}
+`;
+}
+
+/** Client for the Apps Script web app. Errors are SheetsErrors with a staff-readable message. */
+function createSheetsClient(webAppUrl, secret, { fetchImpl = fetch } = {}) {
+  async function call(payload) {
     let res;
     try {
-      res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(20000), redirect: 'error' });
+      // Apps Script answers a POST with a redirect to the script's output, which fetch follows (as a GET).
+      res = await fetchImpl(webAppUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ ...payload, secret }),
+        redirect: 'follow',
+        signal: AbortSignal.timeout(60000),
+      });
     } catch (err) {
-      throw new SheetsError(`Could not reach Google (${what}): ${err.message}`, { transient: true });
+      throw new SheetsError(`Could not reach Google: ${err.message}`, { transient: true });
     }
-    const body = await res.json().catch(() => null);
-    if (res.ok) return body;
-    const detail = (body && body.error && (body.error.message || body.error_description || body.error)) || `HTTP ${res.status}`;
-    throw new SheetsError(String(detail), { status: res.status, transient: res.status === 429 || res.status >= 500 });
-  }
-
-  async function accessToken() {
-    if (token && now() < tokenExpires - 60000) return token;
-    let body;
+    const text = await res.text().catch(() => '');
+    let body = null;
     try {
-      body = await call(
-        sa.tokenUrl,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
-            assertion: signAssertion(sa, Math.floor(now() / 1000)),
-          }).toString(),
-        },
-        'sign-in',
-      );
-    } catch (err) {
-      if (err.transient) throw err;
-      throw new SheetsError(`Google rejected the service-account key: ${err.message}`, { status: err.status });
+      body = JSON.parse(text);
+    } catch {
+      body = null;
     }
-    token = body.access_token;
-    tokenExpires = now() + (Number(body.expires_in) || 3600) * 1000;
-    return token;
-  }
-
-  async function api(method, path, body) {
-    const t = await accessToken();
-    return call(
-      `${API}/${path}`,
-      {
-        method,
-        headers: { Authorization: `Bearer ${t}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
-        body: body ? JSON.stringify(body) : undefined,
-      },
-      'Sheets API',
-    );
+    if (res.status === 429 || res.status >= 500) {
+      throw new SheetsError(`Google is busy (HTTP ${res.status}). The rows will be sent again shortly.`, { status: res.status, transient: true });
+    }
+    if (res.status === 404) throw new SheetsError(NOT_FOUND_MSG, { status: 404 });
+    // Anything but the script's JSON (typically a Google sign-in page) means the request never reached it.
+    if (!res.ok || !body || typeof body !== 'object') throw new SheetsError(NO_ANSWER_MSG, { status: res.status });
+    if (body.ok !== true) {
+      if (body.error === 'bad_secret') throw new SheetsError(SECRET_MSG, { status: 403 });
+      throw new SheetsError(`The script in the sheet reported: ${String(body.message || body.error || 'an error')}`.slice(0, 500));
+    }
+    if (typeof body.spreadsheetId !== 'string' || !body.spreadsheetId) throw new SheetsError(NO_ANSWER_MSG, { status: res.status });
+    return { spreadsheetId: body.spreadsheetId, title: String(body.title || ''), url: typeof body.url === 'string' ? body.url : null };
   }
 
   return {
-    /** { title, tabs: [title] } */
-    async describe(spreadsheetId) {
-      const r = await api('GET', `${encodeURIComponent(spreadsheetId)}?fields=properties.title,sheets.properties.title`);
-      return { title: r.properties.title, tabs: (r.sheets || []).map((s) => s.properties.title) };
-    },
-    /** Make sure the tab exists and starts with the header row. */
-    async ensureTab(spreadsheetId, title, header) {
-      const id = encodeURIComponent(spreadsheetId);
-      const { tabs } = await this.describe(spreadsheetId);
-      if (!tabs.includes(title)) {
-        await api('POST', `${id}:batchUpdate`, { requests: [{ addSheet: { properties: { title } } }] });
-      }
-      const first = await api('GET', `${id}/values/${encodeURIComponent(`${quoteTab(title)}!1:1`)}`);
-      if (!first.values || !first.values.length) {
-        await api('PUT', `${id}/values/${encodeURIComponent(`${quoteTab(title)}!A1`)}?valueInputOption=RAW`, { values: [header] });
-      }
-    },
-    /** Append rows below the existing data. RAW: nothing is interpreted as a formula. */
-    async append(spreadsheetId, title, rows) {
-      const range = encodeURIComponent(`${quoteTab(title)}!A1`);
-      await api('POST', `${encodeURIComponent(spreadsheetId)}/values/${range}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, {
-        values: rows,
-      });
-    },
+    /** { spreadsheetId, title, url } of the spreadsheet the script belongs to. */
+    describe: () => call({ action: 'describe' }),
+    /** Append rows to tabs: [{ name, header, key (column index of the unique value), rows }]. */
+    append: (tabs) => call({ action: 'append', tabs }),
   };
 }
 
-module.exports = { loadServiceAccount, parseSheetUrl, signAssertion, createSheetsClient, SheetsError, SCOPE };
+module.exports = { parseWebAppUrl, isTestDeploymentUrl, newSecret, appsScript, createSheetsClient, SheetsError };

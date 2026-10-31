@@ -137,8 +137,7 @@ function createApp({ db, config, notifier, emailQuota, sheetsFetch, background =
         emailEnabled: delivery.enabled(),
         emailDailyLimit: quota.limit,
         sheet: {
-          connected: sheet.connected,
-          configured: Boolean(sheet.sheetId),
+          configured: sheet.configured,
           pending: sheet.pending,
           lastSyncAt: sheet.lastSyncAt,
           lastError: sheet.lastError,

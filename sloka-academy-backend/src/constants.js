@@ -38,6 +38,7 @@ const SOURCES = [
   ['brochure', 'Brochure download'],
   ['phone-call', 'Phone call'],
   ['walk-in', 'Walk-in'],
+  ['referral', 'Referral'], // a friend named on a career guidance certificate registration
 ];
 
 const STATUSES = [

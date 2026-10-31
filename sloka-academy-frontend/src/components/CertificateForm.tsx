@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useId, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ChangeEvent, type FormEvent, type ReactNode } from "react";
 import { site } from "@/config/site";
 import { YEARS_OF_STUDY } from "@/data/inquiry";
 import { STREAMS } from "@/data/streams";
@@ -23,9 +23,14 @@ type Sessions = { state: "loading" } | { state: "ready"; list: GuidanceSession[]
 
 type Status =
   | { state: "idle" | "sending" }
-  | { state: "issued"; certificate: IssuedCertificate; emailedTo: string | null; verification: Verification | null }
+  | { state: "issued"; certificate: IssuedCertificate; emailedTo: string | null; verification: Verification | null; referred: number }
   | { state: "already"; emailed: boolean }
   | { state: "error"; message: string; fields: Record<string, string> };
+
+/** One friend under "Refer a friend". `key` only identifies the row in the form. */
+type Friend = { key: number; name: string; phone: string; college: string };
+const MAX_FRIENDS = 3;
+const isFilled = (f: Friend) => Boolean(f.name.trim() || f.phone.trim() || f.college.trim());
 
 function sessionLabel(s: GuidanceSession) {
   return `${s.title} · ${formatDate(s.date)} · ${s.mode === "online" ? "Online" : s.venue}`;
@@ -34,10 +39,13 @@ function sessionLabel(s: GuidanceSession) {
 function Issued({
   certificate,
   emailedTo,
+  referred,
   verification,
 }: {
   certificate: IssuedCertificate;
   emailedTo: string | null;
+  /** Friends referred with this registration. */
+  referred: number;
   /** Profile verification step, when the details differ from the student's existing profile. */
   verification?: ReactNode;
 }) {
@@ -51,6 +59,12 @@ function Issued({
           <p className="mt-4 leading-relaxed text-muted">
             We are also emailing it to <span className="text-text">{emailedTo}</span>. If it hasn&rsquo;t arrived in a
             few minutes, check your spam folder.
+          </p>
+        )}
+        {referred > 0 && (
+          <p className="mt-4 leading-relaxed text-muted">
+            Thank you for referring {referred === 1 ? "your friend" : `${referred} friends`}. We will invite{" "}
+            {referred === 1 ? "them" : "each of them"} to our upcoming sessions.
           </p>
         )}
       </div>
@@ -106,6 +120,8 @@ export function CertificateForm() {
   const requested = Number(useSearchParams().get("session"));
   const [sessions, setSessions] = useState<Sessions>({ state: "loading" });
   const [status, setStatus] = useState<Status>({ state: "idle" });
+  const nextKey = useRef(1);
+  const [friends, setFriends] = useState<Friend[]>([{ key: 0, name: "", phone: "", college: "" }]);
   const errors = status.state === "error" ? status.fields : {};
   const bind = (name: string, opts?: { hint?: boolean }) => fieldProps(uid, name, errors, opts);
 
@@ -121,13 +137,23 @@ export function CertificateForm() {
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const data = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
+    const form = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
+    // The friends go as a list whose indexes match the form, so errors land on the right field.
+    const data = Object.fromEntries(Object.entries(form).filter(([k]) => !k.startsWith("referrals.")));
+    const referrals = friends.map(({ name, phone, college }) => ({ name, phone, college }));
+    const referred = friends.filter(isFilled).length;
     setStatus({ state: "sending" });
     try {
       const res = await fetch(`${site.apiUrl}/api/public/certificate-registrations`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...data, sessionId: Number(data.sessionId), consent: data.consent === "on" }),
+        body: JSON.stringify({
+          ...data,
+          sessionId: Number(data.sessionId),
+          consent: data.consent === "on",
+          referrals,
+          referralConsent: data.referralConsent === "on",
+        }),
       });
       const body = (await res.json().catch(() => null)) as {
         certificate?: IssuedCertificate;
@@ -142,6 +168,7 @@ export function CertificateForm() {
           certificate: body.certificate,
           emailedTo: body.emailing ? data.email.trim() : null,
           verification: body.verification ?? null,
+          referred,
         });
         return;
       }
@@ -175,6 +202,7 @@ export function CertificateForm() {
       <Issued
         certificate={status.certificate}
         emailedTo={status.emailedTo}
+        referred={status.referred}
         verification={
           status.verification && (
             <ProfileVerification verification={status.verification} what="registration" showStudentId={false} onVerified={linkStudent} />
@@ -304,6 +332,15 @@ export function CertificateForm() {
         </select>
       </Field>
 
+      <ReferFriends
+        uid={uid}
+        friends={friends}
+        errors={errors}
+        onChange={(i, patch) => setFriends((list) => list.map((f, j) => (j === i ? { ...f, ...patch } : f)))}
+        onAdd={() => setFriends((list) => [...list, { key: nextKey.current++, name: "", phone: "", college: "" }])}
+        onRemove={(i) => setFriends((list) => list.filter((_, j) => j !== i))}
+      />
+
       <Honeypot uid={uid} />
 
       <Consent error={errors.consent}>
@@ -315,5 +352,106 @@ export function CertificateForm() {
 
       <SubmitButton sending={status.state === "sending"} label="Get my certificate" sendingLabel="Issuing…" />
     </FormGrid>
+  );
+}
+
+/**
+ * "Refer a friend": up to three friends from other colleges whom admissions can invite to upcoming sessions.
+ * Optional; rows left blank are ignored. Once a friend is filled in, the student confirms the friend agreed.
+ */
+function ReferFriends({
+  uid,
+  friends,
+  errors,
+  onChange,
+  onAdd,
+  onRemove,
+}: {
+  uid: string;
+  friends: Friend[];
+  errors: Record<string, string>;
+  onChange: (index: number, patch: Partial<Friend>) => void;
+  onAdd: () => void;
+  onRemove: (index: number) => void;
+}) {
+  const headingId = `${uid}-refer`;
+  const consentError = errors.referralConsent;
+  return (
+    <div
+      role="group"
+      aria-labelledby={headingId}
+      className="min-w-0 rounded-[var(--radius)] border border-line-2 bg-white/[0.03] p-5 @lg:col-span-2 sm:p-6"
+    >
+      <p className="kicker">Refer a friend</p>
+      <h3 id={headingId} className="h-sub mt-4">
+        Know someone at another college who would enjoy a session like this?
+      </h3>
+      <p className="mt-2 text-sm leading-relaxed text-muted">
+        Add up to {MAX_FRIENDS} friends and we will invite them to our upcoming sessions. This is optional.
+      </p>
+
+      <div className="mt-6 grid gap-6">
+        {friends.map((f, i) => {
+          const bind = (key: "name" | "phone" | "college") => ({
+            ...fieldProps(uid, `referrals.${i}.${key}`, errors),
+            value: f[key],
+            onChange: (e: ChangeEvent<HTMLInputElement>) => onChange(i, { [key]: e.target.value }),
+          });
+          return (
+            <div key={f.key} className={`grid items-start gap-x-5 gap-y-5 @lg:grid-cols-2 ${i > 0 ? "border-t border-line pt-6" : ""}`}>
+              {friends.length > 1 && (
+                <div className="flex items-center justify-between gap-4 @lg:col-span-2">
+                  <p className="text-sm font-medium">Friend {i + 1}</p>
+                  <button
+                    type="button"
+                    onClick={() => onRemove(i)}
+                    aria-label={`Remove friend ${i + 1}`}
+                    className="min-h-11 px-2 text-sm text-muted underline underline-offset-4 transition-colors hover:text-text"
+                  >
+                    Remove
+                  </button>
+                </div>
+              )}
+              <Field id={`${uid}-referrals.${i}.name`} label="Friend's full name" error={errors[`referrals.${i}.name`]}>
+                <input {...bind("name")} type="text" maxLength={100} autoComplete="off" />
+              </Field>
+              <Field id={`${uid}-referrals.${i}.phone`} label="Friend's mobile number" error={errors[`referrals.${i}.phone`]}>
+                <input {...bind("phone")} type="tel" inputMode="tel" maxLength={20} autoComplete="off" placeholder="10-digit mobile" />
+              </Field>
+              <Field id={`${uid}-referrals.${i}.college`} label="Friend's college" error={errors[`referrals.${i}.college`]} wide>
+                <input {...bind("college")} type="text" maxLength={150} autoComplete="off" />
+              </Field>
+            </div>
+          );
+        })}
+      </div>
+
+      {friends.length < MAX_FRIENDS && (
+        <button type="button" onClick={onAdd} className="btn btn-glass mt-6">
+          Add another friend
+        </button>
+      )}
+
+      {friends.some(isFilled) && (
+        <div className="mt-6 border-t border-line pt-6">
+          <label className="flex cursor-pointer items-start gap-3 text-sm leading-relaxed text-muted">
+            <input
+              type="checkbox"
+              name="referralConsent"
+              required
+              aria-invalid={consentError ? true : undefined}
+              aria-describedby={consentError ? `${uid}-referralConsent-error` : undefined}
+              className="check mt-px"
+            />
+            <span>My friends know I am sharing their details and agree that Sloka Academy may contact them about its sessions.</span>
+          </label>
+          {consentError && (
+            <p id={`${uid}-referralConsent-error`} className="field-error pl-8">
+              {consentError}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

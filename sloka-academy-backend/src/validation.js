@@ -315,6 +315,46 @@ function validateCertificateRegistration(input) {
     yearOfStudy: {},
   });
   if (body.consent !== true) errors.consent = CONSENT_MSG;
+  const referrals = validateReferrals(body, values.phone);
+  values.referrals = referrals.values;
+  Object.assign(errors, referrals.errors);
+  return { values, errors };
+}
+
+const MAX_REFERRALS = 3;
+const REFERRAL_FIELDS = {
+  name: { label: "Friend's name", check: text({ min: 2, max: 100 }), requiredMsg: "Enter your friend's name." },
+  phone: { label: "Friend's mobile number", check: phone, requiredMsg: "Enter your friend's mobile number." },
+  college: { label: "Friend's college", check: text({ min: 2, max: 150 }), requiredMsg: "Enter your friend's college." },
+};
+
+/**
+ * Refer a friend: optional `referrals` ([{ name, phone, college }], at most 3) on a certificate registration.
+ * Entries left completely blank are dropped. Errors are keyed `referrals.<index>.<field>`.
+ */
+function validateReferrals(body, ownPhone) {
+  const values = [];
+  const errors = {};
+  const raw = body.referrals ?? [];
+  if (!Array.isArray(raw)) return { values, errors: { referrals: 'Invalid referral details.' } };
+  if (raw.length > MAX_REFERRALS) return { values, errors: { referrals: `You can refer up to ${MAX_REFERRALS} friends.` } };
+  const seen = new Set();
+  raw.forEach((entry, i) => {
+    const friend = asObject(entry);
+    if (Object.keys(REFERRAL_FIELDS).every((k) => isBlank(friend[k]))) return;
+    const spec = Object.fromEntries(Object.entries(REFERRAL_FIELDS).map(([k, def]) => [k, { required: true, def }]));
+    const r = run(friend, spec);
+    if (!r.errors.phone) {
+      if (r.values.phone === ownPhone) r.errors.phone = "That's your own number. Enter your friend's mobile number.";
+      else if (seen.has(r.values.phone)) r.errors.phone = "You've already added a friend with this number.";
+      seen.add(r.values.phone);
+    }
+    for (const [k, msg] of Object.entries(r.errors)) errors[`referrals.${i}.${k}`] = msg;
+    if (!Object.keys(r.errors).length) values.push(r.values);
+  });
+  if (values.length && body.referralConsent !== true) {
+    errors.referralConsent = 'Please confirm that your friends agreed to be contacted by Sloka Academy.';
+  }
   return { values, errors };
 }
 

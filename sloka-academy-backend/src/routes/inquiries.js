@@ -41,7 +41,7 @@ function inquiriesRouter({ db, repo, auth, verifications }) {
     const header = [
       'ID', 'Created at', 'Name', 'Phone', 'Email', 'College', 'Stream', 'Year of study', 'Domain', 'Plan',
       'Source', 'Brochure', 'Message', 'Status', 'Assigned counsellor', 'Next follow-up', 'Consent at',
-      'Created by', 'Updated at', 'Notes', 'Student ID',
+      'Created by', 'Updated at', 'Notes', 'Student ID', 'Referred by',
     ];
     const data = rows.map((r) => [
       r.id,
@@ -61,12 +61,13 @@ function inquiriesRouter({ db, repo, auth, verifications }) {
       r.assignedTo ? r.assignedTo.name : '',
       r.nextFollowUp,
       localDateTime(r.consentAt),
-      r.createdBy ? r.createdBy.name : 'Website form',
+      r.createdBy ? r.createdBy.name : r.source === 'referral' ? 'Refer a friend' : 'Website form',
       localDateTime(r.updatedAt),
       (notesByInquiry.get(r.id) || [])
         .map((n) => `[${localDateTime(n.created_at)}] ${n.author_name || 'Unknown'}${n.kind === 'change' ? ' (change)' : ''}: ${n.body}`)
         .join('\n'),
       r.studentCode,
+      r.referredBy ? `${r.referredBy.name} (${r.referredBy.certificateId})` : '',
     ]);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="sloka-enquiries-${localDate()}.csv"`);

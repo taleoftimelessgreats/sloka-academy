@@ -255,6 +255,15 @@ const MIGRATIONS = [
       ) ${TABLE}`,
     ],
   },
+  {
+    // Refer a friend: friends named on a certificate registration become enquiries (source 'referral')
+    // pointing back at that registration. Erasing the registration clears the link (done in the app).
+    version: 3,
+    statements: [
+      'ALTER TABLE inquiries ADD COLUMN IF NOT EXISTS referred_by BIGINT',
+      'CREATE INDEX IF NOT EXISTS idx_inquiries_referred_by ON inquiries (referred_by)',
+    ],
+  },
 ];
 
 // Worth running a transaction again for: lock wait timeout, deadlock, and TiDB's write conflicts.

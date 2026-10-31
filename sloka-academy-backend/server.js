@@ -37,10 +37,13 @@ async function main() {
 
   const server = app.listen(config.port, () => {
     const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    console.log(`Sloka Academy admin portal on http://localhost:${config.port} (db: ${dbLabel}, TZ: ${tz})`);
+    console.log(`Sloka Academy API on http://localhost:${config.port} (db: ${dbLabel}, TZ: ${tz})`);
     console.log(`Website forms accepted from: ${config.allowedOrigins.join(', ')}`);
     console.log(`Certificate emails: ${delivery.enabled() ? `on (from ${config.notifyFrom})` : 'off (SMTP not configured)'}`);
-    console.log(`Google Sheets: ${sheetSync.configured() ? `service account ${sheetSync.serviceAccountEmail()}` : 'not connected (no service-account key)'}`);
+    sheetSync
+      .status()
+      .then((s) => console.log(`Google Sheets: ${s.configured ? `connected${s.sheetTitle ? ` (${s.sheetTitle})` : ''}` : 'not connected (admin portal → Settings → Google Sheet)'}`))
+      .catch(() => {});
     sheetSync.start();
   });
 
