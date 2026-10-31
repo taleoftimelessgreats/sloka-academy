@@ -1,20 +1,35 @@
 # Sloka Academy website
 
-Static website for Sloka Academy's 2-Month Internship Course Program. It is built with Next.js (App Router) and exported as plain HTML/CSS/JS. There is no login or payment processing. The Pre-register, Contact and brochure forms send enquiries to the separate, staff-only inquiry dashboard in `../sloka-academy-backend` (see [Enquiry forms](#enquiry-forms)).
+Website for Sloka Academy's 2-Month Internship Course Program, built with Next.js (App Router) and exported as plain HTML/CSS/JS. There is no payment processing.
+
+Everything runs on one domain:
+
+| Path | What |
+| --- | --- |
+| `/` and the other pages | The website (this Next.js app) |
+| `/login/` | Login page: students to the LMS, staff to the admin portal |
+| `/admin/` | Staff admin portal (`public/admin`, a vanilla-JS app; noindex) |
+| `/api/...` | The Sloka Academy API (`../sloka-academy-backend`), run by the Vercel Function in `api/index.mjs` |
+
+The Pre-register, Contact and brochure forms send enquiries to that API (see [Enquiry forms](#enquiry-forms)).
 
 ## Commands
 
 ```bash
 npm install
-npm run dev            # local development at http://localhost:3000
+npm run dev            # local development at http://localhost:3000 (forwards /api to the API on :4000)
 npm run validate:data  # check the domain catalogue, stream mappings, plans and showcase data
 npm run build          # validates data, writes sitemap, exports static site to out/
 npm start              # preview the built out/ folder
 ```
 
-## Hosting
+## Hosting (Vercel)
 
-Upload the contents of `out/` to any static host (Netlify, Vercel, Cloudflare Pages, S3, cPanel, etc.). URLs use trailing slashes (`/domains/vlsi/` → `domains/vlsi/index.html`). Serve `404.html` for missing pages.
+`vercel.json` deploys the website, the admin portal and the API as one project: it builds the static site into `out/`, sends `/api/*` to the function in `api/index.mjs` (Tokyo region, next to the database), adds security headers to `/admin/`, and redirects paths without a trailing slash (`/domains/vlsi` → `/domains/vlsi/`). Project settings and environment variables are listed in `../sloka-academy-backend/README.md` → *Deploying on Vercel*; the key one here is `NEXT_PUBLIC_API_URL=/`.
+
+**Local development** runs two servers: the API (`npm run dev` in `../sloka-academy-backend`, port 4000) and this site (`npm run dev`, port 3000). The site forwards `/api` to the API, so http://localhost:3000/admin/ is the portal, as on the live site.
+
+Without the API, `out/` is still a complete static site for any static host (URLs use trailing slashes; serve `404.html` for missing pages), with the forms switched off.
 
 ## Where content lives
 
@@ -47,10 +62,10 @@ The homepage sections for reviews, certification and brochures only publish real
 
 ## Enquiry forms
 
-The Pre-register page (`/pre-register/`), the Contact page and the brochure downloads post to the inquiry dashboard API. Set its URL at build time:
+The Pre-register page (`/pre-register/`), the Contact page and the brochure downloads post to the Sloka Academy API. Set where it is at build time:
 
 ```bash
-cp .env.example .env.local   # NEXT_PUBLIC_API_URL=http://localhost:4000
+cp .env.example .env.local   # NEXT_PUBLIC_API_URL=/  (this domain; `npm run dev` forwards /api to :4000)
 ```
 
 The same backend runs the career guidance session certificates:
@@ -60,13 +75,13 @@ The same backend runs the career guidance session certificates:
 
 Both pages are linked from the footer, not the header, which keeps the live site's menu.
 
-The backend's `ALLOWED_ORIGINS` must include this site's origin. While `NEXT_PUBLIC_API_URL` is unset, no form is shown: Pre-register and Contact offer phone and email instead, brochures download directly, and the Privacy Notice keeps its "no forms" wording. Every form has a consent checkbox linked to the Privacy Notice.
+With `NEXT_PUBLIC_API_URL=/` the forms call `/api` on the same domain, so no CORS setup is needed. A full URL (another server) must be in that server's `ALLOWED_ORIGINS`. While `NEXT_PUBLIC_API_URL` is unset, no form is shown: Pre-register and Contact offer phone and email instead, brochures download directly, and the Privacy Notice keeps its "no forms" wording. Every form has a consent checkbox linked to the Privacy Notice.
 
 ### Before launch: values to confirm (search the code for `CONFIRM`)
 
-- **`site.lmsUrl`**: Sloka Academy's academy-specific Teachmint login URL. While it is empty, the **LMS** navbar link opens an internal `/lms/` help page rather than a broken or generic link.
+- **`site.lmsUrl`**: Sloka Academy's academy-specific Teachmint login URL. While it is empty, the LMS option on the **Login** page opens an internal `/lms/` help page rather than a broken or generic link.
 - **`site.preRegisterUrl`**: optional hosted pre-registration form, used only while the inquiry dashboard is not connected. Otherwise Pre-register goes to `/pre-register/`.
-- **`NEXT_PUBLIC_API_URL`**: the live inquiry dashboard URL (see [Enquiry forms](#enquiry-forms)).
+- **`NEXT_PUBLIC_API_URL`**: `/` on Vercel, where the API runs on the same domain (see [Enquiry forms](#enquiry-forms)).
 - Everything in `src/data/showcase.ts`, and `site.legal`.
 - The Privacy Notice wording for the forms, including requirements under India's Digital Personal Data Protection Act, with a legal adviser.
 - Support hours, WhatsApp, social profiles and the map link.

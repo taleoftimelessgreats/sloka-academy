@@ -1,13 +1,15 @@
-# Sloka Academy — admin portal & backend
+# Sloka Academy — API
 
-Backend and admin portal for Sloka Academy. It does four jobs:
+The API behind the Sloka Academy website and its staff admin portal. It does four jobs:
 
 1. **Career Guidance Certificate form**: students who attended a career guidance session fill in the form on the website (`/certificate/`) with the session code. The certificate of participation is issued immediately: they download it on the spot, it is **emailed to them as a PDF**, and the registration is **copied to a Google Sheet**. Anyone can verify a certificate by its ID.
 2. **Master student database**: every career guidance registration and every Internship Course Program enquiry is linked to one student record with its own **Student ID** (e.g. `SLK-STU-2026-00042`). Students are matched by email or mobile number, so a returning student is never added twice and staff see each student's full history.
 3. **Internship enquiries**: `POST /api/public/inquiries` receives the Pre-register (Internship Course Program), Contact and Brochure-download forms. This process is separate from the certificate form; the two only share the student records.
-4. **Admin portal**: a small vanilla-JS app served at `/` (sign in at `/#/login`). Staff work with students, sessions, certificates and enquiries; managers and admins also run sessions, certificate designs (uploaded templates), settings and users. See [Roles](#roles).
+4. **Admin portal**: a small vanilla-JS app that is part of the website (`sloka-academy-frontend/public/admin`, served at `/admin/`, sign in at `/admin/#/login`); this server provides its API. Staff work with students, sessions, certificates and enquiries; managers and admins also run sessions, certificate designs (uploaded templates), settings and users. See [Roles](#roles).
 
-The portal is never linked from the public site. Every response carries `X-Robots-Tag: noindex, nofollow`, and `robots.txt` disallows all crawling.
+This server serves **API routes only** (`/api/...`); anything else is a JSON 404. Staff reach the portal from the website's Sign in page (`/login/`). Every response carries `X-Robots-Tag: noindex, nofollow`, and the website's `robots.txt` disallows `/admin/` and `/api/`.
+
+On Vercel the website, the portal and this API run as **one project on one domain**: see [Deploying on Vercel](#deploying-on-vercel).
 
 Stack: Node ≥ 22.13 (developed on 24), Express 5, a MySQL-compatible database (TiDB Cloud) through `mysql2`, `bcryptjs`, `jsonwebtoken`, `nodemailer`, `pdf-lib`. There is no build step.
 
@@ -19,10 +21,10 @@ cp .env.example .env          # PowerShell: Copy-Item .env.example .env
 # set DATABASE_URL and JWT_SECRET in .env (generate the secret with the command below)
 node -e "console.log(require('crypto').randomBytes(48).toString('base64url'))"
 npm run create-admin          # prompts for name, email, password (input hidden)
-npm run dev                   # or: npm start
+npm run dev                   # API on http://localhost:4000 (or: npm start)
 ```
 
-Open http://localhost:4000 and sign in. `.env` is loaded with Node's built-in `process.loadEnvFile`. Real environment variables take precedence over it.
+Then start the website (`npm run dev` in `sloka-academy-frontend`), open http://localhost:3000/admin/ and sign in. The website forwards `/api` to this server, as Vercel does in production. `.env` is loaded with Node's built-in `process.loadEnvFile`. Real environment variables take precedence over it.
 
 ## Database
 
@@ -58,10 +60,10 @@ Admins create everyone else under **Users** in the dashboard (managers can add c
 | `DB_PATH` | `./data/sloka.db` | The former SQLite file. Only `npm run import-sqlite` reads it. |
 | `TEST_DATABASE_URL` | the server in `DATABASE_URL` | Database server for `npm test`. See [Tests](#tests). |
 | `JWT_SECRET` | none, **required** | ≥ 32 chars. The server refuses to start without it. |
-| `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated origins allowed to call the public endpoint (exact match) |
-| `TRUST_PROXY` | off | Set behind a reverse proxy: `1` (number of hops), `loopback`, or proxy IPs. Needed for correct client IPs in rate limiting. |
-| `DASHBOARD_URL` | `http://localhost:PORT/` | Public URL of this dashboard. Used for links in team notifications. |
-| `PUBLIC_API_URL` | origin of `DASHBOARD_URL` | Base URL of **this server** used in emailed certificate download links. Only set it if students should see a different hostname for the same server. |
+| `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated **other** origins allowed to call the public endpoints (exact match). Pages on the API's own domain are always allowed. |
+| `TRUST_PROXY` | off (`1` on Vercel) | Set behind a reverse proxy: `1` (number of hops), `loopback`, or proxy IPs. Needed for correct client IPs in rate limiting. |
+| `DASHBOARD_URL` | `http://localhost:3000/admin/` | Public URL of the staff portal (part of the website). Used for links in team notifications. Production: `https://www.slokaacademy.com/admin/`. |
+| `PUBLIC_API_URL` | origin of `DASHBOARD_URL` | Base URL that serves this API, used in emailed certificate download links: the website, which forwards `/api`. Only set it if students should see a different hostname. |
 | `NODE_ENV` | | `production` turns on `Secure`/`__Host-` cookies and HSTS |
 | `TZ` | system | Set to `Asia/Kolkata` so "today", "overdue" and certificate dates follow Indian dates |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `NOTIFY_FROM` | | Outgoing email. With these five set, students are emailed their certificate PDF on registration. Port 465 uses implicit TLS; other ports require STARTTLS. For Google Workspace/Gmail use `smtp.gmail.com`, port `465`, and an [app password](https://support.google.com/accounts/answer/185833). |
@@ -208,7 +210,7 @@ The PDF is generated on demand from the database, so a name correction takes eff
 
 ### Certificate designs (templates)
 
-Managers and admins upload certificate artwork in **Settings → Certificate designs**: a PDF (its first page is used), PNG or JPEG of up to 10 MB, designed **without** the student's details. In the layout editor they choose where each detail is printed (student name, college, session title, session date, venue, issue date, certificate ID, verification link) by position (% across and down the page), size, standard PDF font, colour, alignment, maximum width (long text shrinks to fit) and optional text before it, with a live PDF preview.
+Managers and admins upload certificate artwork in **Settings → Certificate designs**: a PDF (its first page is used), PNG or JPEG of up to 4 MB, designed **without** the student's details. In the layout editor they choose where each detail is printed (student name, college, session title, session date, venue, issue date, certificate ID, verification link) by position (% across and down the page), size, standard PDF font, colour, alignment, maximum width (long text shrinks to fit) and optional text before it, with a live PDF preview.
 
 - One design is the **default** for new certificates; until one is chosen, the built-in Sloka design is used. A session can pick a different design.
 - Each certificate **keeps the design it was issued with**, even if the default changes later. Editing a design's layout changes how its issued certificates look when downloaded again (the portal warns about this).
@@ -274,7 +276,7 @@ The team is **not** notified about certificate registrations.
 | `DELETE /api/certificates/:id` | admin | Permanent erasure of the registration and its activity log |
 | `GET /api/certificates/export` | admin | CSV of all certificates, with the list filters |
 | `GET /api/templates` | staff | Designs (without files), field/font lists, `builtInIsDefault` |
-| `POST /api/templates?name=…` | manager | Upload: the raw file as the body with `Content-Type: application/pdf`, `image/png` or `image/jpeg`. `400 fields.file` explains rejected files; `413` over 10 MB. |
+| `POST /api/templates?name=…` | manager | Upload: the raw file as the body with `Content-Type: application/pdf`, `image/png` or `image/jpeg`. `400 fields.file` explains rejected files; `413` over 4 MB (Vercel refuses request bodies over 4.5 MB). |
 | `GET /api/templates/:id` · `GET /api/templates/:id/file` | manager | Detail with layout; the original file |
 | `PATCH /api/templates/:id` | manager | `{name?, layout?, archived?}`. Layout errors come back per field, e.g. `fields["name.x"]`. |
 | `PUT /api/templates/default` | manager | `{id}`, or `{id: null}` for the built-in design |
@@ -309,15 +311,42 @@ TEST_DATABASE_URL='mysql://root:@127.0.0.1:4000/sloka?ssl=false' npm test
 - Designs: layout validation, uploads (PDF, PNG, junk, empty pages, tiny images, oversized files), previews, the default and per-session designs, issued certificates keeping their design, archive/delete rules.
 - Google Sheets: link parsing, the signed service-account JWT, syncing against a fake Google API (tab and header creation, back-fill, new rows, plain-text values, token reuse) and the "not shared" error and retry.
 
-## Deployment notes
+## Deploying on Vercel
 
-- The data is in the database, so the Node host needs no persistent disk. Host it close to the database region (AWS Tokyo, `ap-northeast-1`), since every query is a network round trip. Check the backup settings in the TiDB Cloud console.
+The website project (`sloka-academy-frontend`) deploys everything under one domain:
+
+| Path | What | Where it comes from |
+|---|---|---|
+| `/`, `/domains/`, `/login/` … | The website | Next.js static export (`out/`) |
+| `/admin/` | Staff portal | `sloka-academy-frontend/public/admin` |
+| `/api/…` | This API | Vercel Function `sloka-academy-frontend/api/index.mjs`, which runs `src/serverless.js` |
+
+`sloka-academy-frontend/vercel.json` holds the settings (build, output folder, the `/api` rewrite, security headers for `/admin/`, Tokyo region next to the database). In the Vercel project:
+
+1. **Root Directory**: `sloka-academy-frontend`, with **Include files outside the root directory in the Build Step** on (the function uses this folder).
+2. **Environment Variables** (Production and Preview):
+   - `NEXT_PUBLIC_API_URL` = `/` (the forms send to this same domain)
+   - `DATABASE_URL`, `JWT_SECRET`, and the SMTP/notification values from your `.env`
+   - `NODE_ENV` = `production`, `TZ` = `Asia/Kolkata`
+   - `DASHBOARD_URL` = `https://www.slokaacademy.com/admin/`
+   - Not needed: `ALLOWED_ORIGINS` (same domain), `TRUST_PROXY` (defaults to 1 on Vercel), `PUBLIC_API_URL`
+3. Create the first admin from your computer against the same database (`npm run create-admin`), then sign in at `/admin/`.
+
+How it behaves on Vercel:
+
+- The app starts on the first request after a cold start (about 1–2 s: it opens the database and checks migrations).
+- Emails, enquiry notifications and Sheets syncs that continue after a response are kept alive with `waitUntil`.
+- The rate limits are kept in memory per running instance, so under load they are looser than on a single server.
+- Google Sheets: there is no background timer between requests, so rows sync when a registration arrives or when staff press **Sync now** in Settings.
+- Certificate-design uploads are limited to 4 MB.
+
+## Deployment notes (any host)
+
+- The data is in the database, so the host needs no persistent disk. Host it close to the database region (AWS Tokyo, `ap-northeast-1`), since every query is a network round trip. Check the backup settings in the TiDB Cloud console.
 - Serve over **HTTPS** and set `NODE_ENV=production`. That enables `Secure`/`__Host-` cookies and HSTS.
-- Set `ALLOWED_ORIGINS` to the live site origin(s), e.g. `https://www.slokaacademy.com`, with no trailing slash.
+- Serve the website, the portal (`/admin/`) and the API (`/api/`) from one origin: the staff session cookie is `SameSite=Strict` and the portal calls `/api` on its own origin.
 - Behind a proxy or load balancer, set `TRUST_PROXY` (usually `1`). Without it, rate limits see the proxy's IP and every visitor shares one limit.
 - Set `TZ=Asia/Kolkata`.
-- Run a single instance. The rate limiters and the Google Sheets sync live in memory.
-- Keep the dashboard on its own hostname. Do not link it from the public site.
 
 ## Data protection
 

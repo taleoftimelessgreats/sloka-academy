@@ -5,6 +5,9 @@
  * Before launch, confirm each value marked CONFIRM with Sloka Academy.
  */
 
+/** NEXT_PUBLIC_API_URL as set at build time: "" (no API), "/" (this domain) or a full URL. */
+const apiSetting = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
+
 export const site = {
   name: "Sloka Academy",
   programName: "Internship Course Program",
@@ -21,13 +24,14 @@ export const site = {
   },
 
   /**
-   * Base URL of the Sloka Academy backend (sloka-academy-backend: enquiries and session
-   * certificates), set at build time, e.g. NEXT_PUBLIC_API_URL=https://admissions.slokaacademy.com
-   * While empty, the Pre-register, Contact, brochure and certificate forms are not shown and
+   * Where the forms send to: the Sloka Academy API (sloka-academy-backend: enquiries and session
+   * certificates), set at build time. On Vercel the API runs on this site's own domain, so
+   * NEXT_PUBLIC_API_URL=/ ; a full URL (e.g. http://localhost:4000) points at a separate server.
+   * While unset, the Pre-register, Contact, brochure and certificate forms are not shown and
    * visitors are pointed to phone and email instead, so no data is collected without somewhere
-   * to send it.
+   * to send it. Empty here means "this domain".
    */
-  apiUrl: (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, ""),
+  apiUrl: apiSetting.replace(/\/+$/, ""),
 
   /**
    * CONFIRM: Sloka Academy's academy-specific Teachmint login URL.
@@ -83,7 +87,7 @@ export const site = {
   },
 } as const;
 
-export const formsEnabled = Boolean(site.apiUrl);
+export const formsEnabled = apiSetting !== "";
 
 export const lmsHref = site.lmsUrl || "/lms/";
 export const lmsIsExternal = Boolean(site.lmsUrl);

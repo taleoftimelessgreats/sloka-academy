@@ -55,7 +55,7 @@ function createSettings(db) {
  * Copies every career-guidance registration to the Google Sheet configured in the dashboard
  * (one row each, appended to the "Career Guidance Registrations" tab). Rows that fail are retried.
  */
-function createSheetSync({ db, config, settings, logger = console, fetchImpl, clientFactory = createSheetsClient }) {
+function createSheetSync({ db, config, settings, logger = console, fetchImpl, clientFactory = createSheetsClient, background = null }) {
   let sa = null;
   let keyError = null;
   try {
@@ -85,6 +85,7 @@ function createSheetSync({ db, config, settings, logger = console, fetchImpl, cl
   let running = null;
   let timer = null;
   let timerDue = 0;
+  let releaseTimer = null; // settles the background promise of the pending timer when it is replaced or stopped
   let interval = null;
   let pausedUntil = 0; // after a permanent error (e.g. sheet not shared), background retries slow down
 
@@ -142,12 +143,20 @@ function createSheetSync({ db, config, settings, logger = console, fetchImpl, cl
     const due = Date.now() + delayMs;
     if (timer && timerDue <= due) return;
     clearTimeout(timer);
+    releaseTimer?.();
     timerDue = due;
-    timer = setTimeout(() => {
-      timer = null;
-      syncNow().catch(() => {});
-    }, delayMs);
+    const fired = new Promise((resolve) => {
+      releaseTimer = resolve;
+      timer = setTimeout(() => {
+        timer = null;
+        releaseTimer = null;
+        syncNow()
+          .catch(() => {})
+          .finally(resolve);
+      }, delayMs);
+    });
     timer.unref?.();
+    background?.(fired);
   }
 
   return {
@@ -207,8 +216,10 @@ function createSheetSync({ db, config, settings, logger = console, fetchImpl, cl
     stop() {
       clearInterval(interval);
       clearTimeout(timer);
+      releaseTimer?.();
       interval = null;
       timer = null;
+      releaseTimer = null;
     },
     idle: () => (running ? running.catch(() => {}) : Promise.resolve()),
   };

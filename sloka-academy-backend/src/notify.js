@@ -26,8 +26,9 @@ function summaryLines(inquiry) {
  * Team notifications (email and chat webhook) and student emails.
  * quota: the daily per-recipient email limit (emailQuota.js); every email passes it before sending.
  * transport: a nodemailer-style { sendMail } to use instead of SMTP (tests).
+ * background: receives promises for work that outlives the request (serverless.js); optional.
  */
-function createNotifier(config, { logger = console, quota = null, transport = null } = {}) {
+function createNotifier(config, { logger = console, quota = null, transport = null, background = null } = {}) {
   // SMTP + sender are enough to email students; team notifications also need NOTIFY_TO.
   const smtpReady = Boolean(config.smtp && config.smtp.host && config.smtp.port && config.smtp.user && config.smtp.pass && config.notifyFrom);
   const emailEnabled = smtpReady && Boolean(config.notifyTo);
@@ -98,14 +99,15 @@ function createNotifier(config, { logger = console, quota = null, transport = nu
         logger.log(`[notify] New enquiry #${inquiry.id} (${inquiry.source}); no email or webhook notification configured.`);
         return;
       }
-      setImmediate(() => {
-        if (emailEnabled) {
-          sendEmail(inquiry).catch((err) => logger.error(`[notify] email failed for enquiry #${inquiry.id}: ${err.message}`));
-        }
-        if (webhookUrl) {
-          sendWebhook(inquiry).catch((err) => logger.error(`[notify] webhook failed for enquiry #${inquiry.id}: ${err.message}`));
-        }
-      });
+      const work = new Promise((resolve) => setImmediate(resolve)).then(() =>
+        Promise.allSettled([
+          emailEnabled &&
+            sendEmail(inquiry).catch((err) => logger.error(`[notify] email failed for enquiry #${inquiry.id}: ${err.message}`)),
+          webhookUrl &&
+            sendWebhook(inquiry).catch((err) => logger.error(`[notify] webhook failed for enquiry #${inquiry.id}: ${err.message}`)),
+        ]),
+      );
+      background?.(work);
     },
 
     // ---- certificates: emails go to the STUDENT only (no team notification for registrations)

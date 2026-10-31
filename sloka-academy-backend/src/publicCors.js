@@ -7,11 +7,22 @@
 function createPublicCors(config) {
   const allowed = new Set(config.allowedOrigins);
 
+  // A page served by this same host (on Vercel the website and the API share one domain, previews
+  // included) is not a cross-origin caller, whatever ALLOWED_ORIGINS lists.
+  const sameHost = (origin, host) => {
+    try {
+      return new URL(origin).host === host;
+    } catch {
+      return false;
+    }
+  };
+
   function cors(req, res, next) {
     res.vary('Origin');
     const origin = req.headers.origin;
-    req.originAllowed = !origin || allowed.has(origin);
-    if (origin && allowed.has(origin)) res.setHeader('Access-Control-Allow-Origin', origin);
+    const listed = Boolean(origin) && allowed.has(origin);
+    req.originAllowed = !origin || listed || sameHost(origin, req.headers.host);
+    if (listed) res.setHeader('Access-Control-Allow-Origin', origin);
     next();
   }
 
