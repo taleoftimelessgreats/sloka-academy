@@ -25,7 +25,12 @@ function sessionsRouter({ config, certRepo, templateRepo, auth }) {
     const t = await templateRepo.get(values.templateId);
     if (!t || t.archived) errors.templateId = 'Choose an available certificate design.';
   }
-  const withLink = (s) => s && { ...s, studentLink: `${config.siteUrl}/certificate/?session=${s.id}` };
+  // studentLinkWithCode fills in the code on the form: share it only once the session is over.
+  const withLink = (s) => {
+    if (!s) return s;
+    const studentLink = `${config.siteUrl}/certificate/?session=${s.id}`;
+    return { ...s, studentLink, studentLinkWithCode: `${studentLink}&code=${encodeURIComponent(s.code)}` };
+  };
 
   async function load(id) {
     const s = await certRepo.getSession(id);

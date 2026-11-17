@@ -1428,12 +1428,15 @@
         : null,
     );
 
+    const linkRow = (url) => h('div', { class: 'row' }, h('a', { class: 'mono break', href: url, target: '_blank', rel: 'noopener noreferrer' }, url), copyBtn(url));
     const linkCard = h(
       'section',
       { class: 'card' },
-      h('h2', null, 'Student link'),
-      h('p', { class: 'muted small' }, 'Share this link (or a QR code of it) with the students.'),
-      h('div', { class: 'row' }, h('a', { class: 'mono break', href: s.studentLink, target: '_blank', rel: 'noopener noreferrer' }, s.studentLink), copyBtn(s.studentLink)),
+      h('h2', null, 'Student links'),
+      h('p', { class: 'muted small' }, 'With the code filled in: share this link (or a QR code of it) at the end of the session. Anyone who has it can get a certificate, so do not share it earlier.'),
+      linkRow(s.studentLinkWithCode),
+      h('p', { class: 'muted small' }, 'Without the code: opens the form with this session selected; students type the code you announce.'),
+      linkRow(s.studentLink),
     );
 
     let adminCard = null;

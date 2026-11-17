@@ -199,6 +199,8 @@ A few other cases:
 
 Staff create a **session** (title, date, venue, in-person/online, optional closing time, optional certificate design). Each session gets a 6-character code from an alphabet without look-alikes (no 0/O/1/I/L), or managers and admins set their own (6–20 letters/digits). The code is announced at the end of the session. A student who enters the correct code on the website gets their certificate **immediately**; there is no approval step.
 
+Each session has two student links (shown on the session's page in the portal): `/certificate/?session=<id>` opens the form with the session selected, and `/certificate/?session=<id>&code=<code>` also fills in the code. Anyone who has the second link can get a certificate, so share it (or a QR code of it) only at the end of the session.
+
 The website form works in two steps. First it sends the registration with `preview: true`: the server checks it exactly as it would a registration (fields, session, code, an earlier registration) and answers with the certificate as it would be printed, stamped **PREVIEW** and with `SLK-<year>-XXXXXXXX` in place of the ID. Nothing is stored. The student checks their name and confirms, and the form sends the same registration again without `preview`, which issues the certificate. The website then shows the issued certificate (`/certificates/:id/preview`) with the download button. The Verify page shows the same view of the certificate under a successful check (stamped REVOKED if it was withdrawn).
 
 After a successful registration the server, in the background:
@@ -279,7 +281,7 @@ The team is **not** notified about certificate registrations.
 
 | Method & path | Who | Notes |
 |---|---|---|
-| `GET /api/sessions` · `GET /api/sessions/:id` | staff | Includes the code, the registration count, `templateId` and `studentLink` |
+| `GET /api/sessions` · `GET /api/sessions/:id` | staff | Includes the code, the registration count, `templateId`, `studentLink` and `studentLinkWithCode` (the form link with `&code=`, which fills in the code) |
 | `POST /api/sessions` · `PATCH /api/sessions/:id` | manager | `{title, sessionDate, venue, mode, description, code, registrationOpen, closesAt, templateId}`. Title and venue must be printable in the PDF fonts. `templateId: null` = the default design. |
 | `POST /api/sessions/:id/regenerate-code` | manager | |
 | `DELETE /api/sessions/:id` | admin | `409 has_registrations` if any student registered. Close registration instead. |

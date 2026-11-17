@@ -184,11 +184,15 @@ function PreviewStep({ preview, onConfirm, onEdit }: { preview: Preview; onConfi
  * The Career Guidance Certificate form (separate from Internship Course Program
  * pre-registration). Lists the sessions open for registration and checks the session
  * code. The student previews the certificate, confirms, and gets it straight away; the
- * backend also emails the PDF. `?session=<id>` preselects a session (for links and QR codes).
+ * backend also emails the PDF. `?session=<id>` preselects a session and `&code=<code>` fills in its code
+ * (for links and QR codes).
  */
 export function CertificateForm() {
   const uid = useId();
-  const requested = Number(useSearchParams().get("session"));
+  const params = useSearchParams();
+  const requested = Number(params.get("session"));
+  // The link shared at the end of a session can carry its code (`&code=`), so students don't type it.
+  const linkCode = (params.get("code") ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 20);
   const [sessions, setSessions] = useState<Sessions>({ state: "loading" });
   const [status, setStatus] = useState<Status>({ state: "idle" });
   const nextKey = useRef(1);
@@ -371,7 +375,7 @@ export function CertificateForm() {
           <Field
             id={`${uid}-code`}
             label="Session code"
-            hint="Announced at the end of the session."
+            hint={linkCode ? "Filled in from your link." : "Announced at the end of the session."}
             error={errors.code}
             wide
           >
@@ -380,7 +384,8 @@ export function CertificateForm() {
               type="text"
               required
               minLength={4}
-              maxLength={12}
+              maxLength={20}
+              defaultValue={linkCode}
               autoComplete="off"
               autoCapitalize="characters"
               spellCheck={false}

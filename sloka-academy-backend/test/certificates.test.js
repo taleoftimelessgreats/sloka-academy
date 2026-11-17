@@ -291,6 +291,7 @@ describe('certificates: staff API', () => {
   test('custom code is stored upper-cased and shown to staff with the student link', async () => {
     assert.equal(session.code, 'CAMPUS26');
     assert.equal(session.studentLink, `https://www.slokaacademy.com/certificate/?session=${session.id}`);
+    assert.equal(session.studentLinkWithCode, `https://www.slokaacademy.com/certificate/?session=${session.id}&code=${session.code}`);
     const bad = await ctx.adminApi.post('/api/sessions', { title: 'X Session', sessionDate: '2026-11-12', mode: 'in-person', venue: 'Somewhere', code: 'abc' });
     assert.equal(bad.status, 400);
     assert.ok(bad.data.fields.code);
