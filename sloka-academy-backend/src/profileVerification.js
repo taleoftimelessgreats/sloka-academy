@@ -252,4 +252,4 @@ async function detachFromStudent(db, studentId, idPrefix) {
   };
 }
 
-module.exports = { createProfileVerification, openVerification, closeForRecord, detachFromStudent, maskEmail, RESOLUTIONS };
+module.exports = { createProfileVerification, openVerification, closeForRecord, detachFromStudent };

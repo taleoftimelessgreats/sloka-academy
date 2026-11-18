@@ -7,7 +7,7 @@ const { parseEnv } = require('node:util');
 const { openDatabase } = require('../src/db');
 const { createApp } = require('../src/app');
 const { loadConfig, parseDatabaseUrl, PROJECT_ROOT } = require('../src/config');
-const { createUser } = require('../src/routes/users');
+const { createUser } = require('../src/routes/associates');
 const { createNotifier } = require('../src/notify');
 const { createEmailQuota } = require('../src/emailQuota');
 
@@ -55,7 +55,10 @@ async function openTestDatabase() {
     url,
     drop: async () => {
       await db.run(`DROP DATABASE IF EXISTS \`${name}\``);
-      await db.close();
+      // Closing can trip over a connection the pool was still opening to the database just dropped.
+      await db.close().catch((err) => {
+        if (err.code !== 'ER_BAD_DB_ERROR') throw err;
+      });
     },
   };
 }
@@ -79,7 +82,8 @@ function certificateEmail(msg) {
 /**
  * The app on an ephemeral port with its own database.
  * studentEmail: true sends real emails (notify.js, with the daily limit) to a fake mail server:
- *   ctx.emails = certificate emails, ctx.codes = verification codes { to, code }, ctx.outbox = every message;
+ *   ctx.emails = certificate emails, ctx.codes = verification codes { to, code }, ctx.outbox = every message
+ *   (associate invites, offer letters, ...);
  *   set ctx.mail.fail = 'reason' to make sending fail.
  * Without it, email is off.
  */
@@ -103,7 +107,7 @@ async function startApp({ config: overrides = {}, env = {}, studentEmail = false
       sendMail: async (msg) => {
         if (mail.fail) throw new Error(mail.fail);
         outbox.push(msg);
-        if (msg.attachments) emails.push(certificateEmail(msg));
+        if (msg.attachments && /^Sloka-Academy-Certificate-/.test(msg.attachments[0].filename)) emails.push(certificateEmail(msg));
         const code = /this code on the form: (\d{6})/.exec(msg.text);
         if (code) codes.push({ to: msg.to, code: code[1] });
       },

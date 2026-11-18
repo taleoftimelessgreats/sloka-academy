@@ -21,12 +21,6 @@ function parseOrigins(value) {
     .filter(Boolean);
 }
 
-// The former SQLite database file, read by scripts/import-sqlite.js.
-function resolveDbPath(value) {
-  const p = value && String(value).trim() ? String(value).trim() : './data/sloka.db';
-  return path.resolve(PROJECT_ROOT, p);
-}
-
 const SYSTEM_SCHEMAS = ['sys', 'mysql', 'information_schema', 'performance_schema', 'metrics_schema'];
 
 /**
@@ -141,4 +135,4 @@ function loadConfig(env = process.env) {
   };
 }
 
-module.exports = { loadConfig, parseTrustProxy, parseOrigins, parseDatabaseUrl, resolveDbPath, PROJECT_ROOT };
+module.exports = { loadConfig, parseDatabaseUrl, PROJECT_ROOT };

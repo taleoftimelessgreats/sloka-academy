@@ -15,10 +15,18 @@ const toApi = (s) =>
     college: s.college,
     stream: s.stream,
     yearOfStudy: s.year_of_study,
+    gender: s.gender ?? null,
+    dateOfBirth: s.date_of_birth ?? null,
+    qualification: s.qualification ?? null,
+    specialization: s.specialization ?? null,
+    graduationYear: s.graduation_year ?? null,
+    city: s.city ?? null,
+    state: s.state ?? null,
     createdAt: s.created_at,
     updatedAt: s.updated_at,
     certificates: s.cert_count ?? undefined,
     enquiries: s.enquiry_count ?? undefined,
+    registrations: s.enrollment_count ?? undefined, // internship registrations (enrollments)
     latestEnquiryStatus: s.enquiry_status ?? undefined,
     lastActivityAt: s.last_activity ?? undefined,
     // Programme tags (constants PROGRAMS), from the student's records.
@@ -32,6 +40,7 @@ const SELECT = `
   SELECT st.*,
     (SELECT COUNT(*) FROM certificate_registrations r WHERE r.student_id = st.id) AS cert_count,
     (SELECT COUNT(*) FROM inquiries i WHERE i.student_id = st.id) AS enquiry_count,
+    (SELECT COUNT(*) FROM enrollments e WHERE e.student_id = st.id) AS enrollment_count,
     (SELECT COUNT(*) FROM profile_verifications pv WHERE pv.student_id = st.id AND pv.status IN ('pending', 'failed')) AS pending_count,
     (SELECT i.status FROM inquiries i WHERE i.student_id = st.id ORDER BY i.created_at DESC, i.id DESC LIMIT 1) AS enquiry_status,
     GREATEST(st.created_at,
@@ -122,7 +131,21 @@ function parseStudentFilters(query) {
   };
 }
 
-const PROFILE_COLUMNS = { name: 'name', email: 'email', phone: 'phone', college: 'college', stream: 'stream', yearOfStudy: 'year_of_study' };
+const PROFILE_COLUMNS = {
+  name: 'name',
+  email: 'email',
+  phone: 'phone',
+  college: 'college',
+  stream: 'stream',
+  yearOfStudy: 'year_of_study',
+  gender: 'gender',
+  dateOfBirth: 'date_of_birth',
+  qualification: 'qualification',
+  specialization: 'specialization',
+  graduationYear: 'graduation_year',
+  city: 'city',
+  state: 'state',
+};
 
 function createStudentRepo(db, { studentIdPrefix = 'SLK' } = {}) {
   const getRow = (id) => db.get(`${SELECT} WHERE st.id = ?`, [id]);
@@ -185,7 +208,8 @@ function createStudentRepo(db, { studentIdPrefix = 'SLK' } = {}) {
   }
 
   /**
-   * Permanent erasure: the student, their registrations/certificates and enquiries, with all logs.
+   * Permanent erasure: the student, their registrations/certificates, internship registrations (with payments and
+   * offer letters) and enquiries, with all logs.
    * Records from other people that were waiting to be verified against this profile get profiles of their own.
    */
   function remove(id) {
@@ -196,6 +220,7 @@ function createStudentRepo(db, { studentIdPrefix = 'SLK' } = {}) {
         await db.run('UPDATE inquiries SET referred_by = NULL WHERE referred_by = ?', [regId]); // friends they referred stay
         await db.run('DELETE FROM certificate_registrations WHERE id = ?', [regId]);
       }
+      await db.run('DELETE FROM enrollments WHERE student_id = ?', [id]); // payments and offer letters go with them
       for (const inqId of await inqIds(id)) {
         await db.run('DELETE FROM inquiry_notes WHERE inquiry_id = ?', [inqId]);
         await db.run('DELETE FROM inquiries WHERE id = ?', [inqId]);

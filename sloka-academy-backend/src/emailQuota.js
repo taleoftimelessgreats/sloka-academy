@@ -70,4 +70,4 @@ function createEmailQuota(db, { limit = 5, retainDays = 30 } = {}) {
   return { limit, reserve, release, remaining };
 }
 
-module.exports = { createEmailQuota, EmailLimitError, recipientsOf };
+module.exports = { createEmailQuota, EmailLimitError };

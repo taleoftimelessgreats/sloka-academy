@@ -14,8 +14,10 @@ function parseId(raw) {
   return Number(raw);
 }
 
-function inquiriesRouter({ db, repo, auth, verifications }) {
+/** Staff: internship enquiries (permissions enquiries.*). */
+function inquiriesRouter({ db, repo, auth, verifications, audit }) {
   const router = express.Router();
+  const may = (action) => auth.requirePermission(`enquiries.${action}`);
 
   async function checkAssignee(values, errors) {
     if (values.assignedTo != null && !errors.assignedTo) {
@@ -30,12 +32,12 @@ function inquiriesRouter({ db, repo, auth, verifications }) {
     return f;
   }
 
-  router.get('/', async (req, res) => {
+  router.get('/', may('view'), async (req, res) => {
     res.json(await repo.list(filtersOrThrow(req)));
   });
 
-  // Spreadsheet export (admins); respects the same filters as the list (no pagination).
-  router.get('/export', auth.requirePermission('export'), async (req, res) => {
+  // Spreadsheet export; respects the same filters as the list (no pagination).
+  router.get('/export', may('export'), async (req, res) => {
     const filters = filtersOrThrow(req);
     const { rows, notesByInquiry } = await repo.exportRows(filters);
     const header = [
@@ -75,7 +77,7 @@ function inquiriesRouter({ db, repo, auth, verifications }) {
   });
 
   // Manual enquiry (phone call / walk-in) entered by staff.
-  router.post('/', async (req, res) => {
+  router.post('/', may('create'), async (req, res) => {
     const { values, errors } = validateManualInquiry(req.body);
     await checkAssignee(values, errors);
     if (hasErrors(errors)) throw validationError(errors);
@@ -84,14 +86,14 @@ function inquiriesRouter({ db, repo, auth, verifications }) {
     res.status(201).json({ inquiry, notes, verification });
   });
 
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', may('view'), async (req, res) => {
     const id = parseId(req.params.id);
     const [inquiry, notes, verification] = await Promise.all([repo.get(id), repo.notes(id), verifications.forRecord({ inquiryId: id })]);
     if (!inquiry) throw new HttpError(404, { error: 'not_found' });
     res.json({ inquiry, notes, verification });
   });
 
-  router.patch('/:id', async (req, res) => {
+  router.patch('/:id', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
     const { values, errors } = validateInquiryUpdate(req.body);
     await checkAssignee(values, errors);
@@ -106,7 +108,7 @@ function inquiriesRouter({ db, repo, auth, verifications }) {
   });
 
   // Notes are append-only: there is no edit or delete endpoint.
-  router.post('/:id/notes', async (req, res) => {
+  router.post('/:id/notes', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
     const { values, errors } = validateNote(req.body);
     if (hasErrors(errors)) throw validationError(errors);
@@ -114,11 +116,12 @@ function inquiriesRouter({ db, repo, auth, verifications }) {
     res.status(201).json({ note: await repo.addNote(id, values.body, req.user.id) });
   });
 
-  // Permanent erasure on request (enquiry + all notes). Admin only.
-  router.delete('/:id', auth.requirePermission('deleteRecords'), async (req, res) => {
+  // Permanent erasure on request (enquiry + all notes).
+  router.delete('/:id', may('delete'), async (req, res) => {
     const id = parseId(req.params.id);
-    if (!(await repo.remove(id))) throw new HttpError(404, { error: 'not_found' });
-    console.log(`[audit] enquiry #${id} permanently deleted by user #${req.user.id}`);
+    const inquiry = await repo.get(id);
+    if (!inquiry || !(await repo.remove(id))) throw new HttpError(404, { error: 'not_found' });
+    await audit.log({ actorId: req.user.id, entity: 'enquiry', entityId: id, action: 'delete', summary: `Permanently deleted the enquiry of ${inquiry.name}` });
     res.status(204).end();
   });
 

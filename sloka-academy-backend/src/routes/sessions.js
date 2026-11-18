@@ -14,10 +14,10 @@ function parseId(raw) {
   return Number(raw);
 }
 
-/** Staff: career guidance sessions. Counsellors read; managers and admins manage. */
+/** Staff: career guidance sessions (permissions sessions.*). */
 function sessionsRouter({ config, certRepo, templateRepo, auth }) {
   const router = express.Router();
-  const manage = auth.requirePermission('manage');
+  const may = (action) => auth.requirePermission(`sessions.${action}`);
 
   // A session may pick an uploaded design; archived ones can only be kept, not newly chosen.
   async function checkTemplate(values, errors, currentId = null) {
@@ -38,11 +38,11 @@ function sessionsRouter({ config, certRepo, templateRepo, auth }) {
     return s;
   }
 
-  router.get('/', async (req, res) => {
+  router.get('/', may('view'), async (req, res) => {
     res.json({ sessions: (await certRepo.listSessions()).map(withLink) });
   });
 
-  router.post('/', manage, async (req, res) => {
+  router.post('/', may('create'), async (req, res) => {
     const { values, errors } = validateSession(req.body);
     if (values.mode === 'in-person' && !values.venue && !errors.venue) errors.venue = 'Venue is required for in-person sessions.';
     await checkTemplate(values, errors);
@@ -50,11 +50,11 @@ function sessionsRouter({ config, certRepo, templateRepo, auth }) {
     res.status(201).json({ session: withLink(await certRepo.createSession(values, req.user.id)) });
   });
 
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', may('view'), async (req, res) => {
     res.json({ session: withLink(await load(parseId(req.params.id))) });
   });
 
-  router.patch('/:id', manage, async (req, res) => {
+  router.patch('/:id', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
     const current = await load(id);
     const { values, errors } = validateSession(req.body, { partial: true });
@@ -67,14 +67,14 @@ function sessionsRouter({ config, certRepo, templateRepo, auth }) {
     res.json({ session: withLink(await certRepo.updateSession(id, values)) });
   });
 
-  router.post('/:id/regenerate-code', manage, async (req, res) => {
+  router.post('/:id/regenerate-code', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
     await load(id);
     res.json({ session: withLink(await certRepo.updateSession(id, { code: generateSessionCode() })) });
   });
 
   // Only sessions without registrations can be deleted (certificates must stay verifiable).
-  router.delete('/:id', auth.requirePermission('deleteRecords'), async (req, res) => {
+  router.delete('/:id', may('delete'), async (req, res) => {
     const result = await certRepo.deleteSession(parseId(req.params.id));
     if (result === 'not_found') throw new HttpError(404, { error: 'not_found' });
     if (result === 'has_registrations') {
@@ -83,7 +83,7 @@ function sessionsRouter({ config, certRepo, templateRepo, auth }) {
     return res.status(204).end();
   });
 
-  router.get('/:id/export', auth.requirePermission('export'), async (req, res) => {
+  router.get('/:id/export', may('export'), async (req, res) => {
     const s = await load(parseId(req.params.id));
     const f = parseRegFilters({ sessionId: String(s.id) });
     const slug = s.sessionDate;

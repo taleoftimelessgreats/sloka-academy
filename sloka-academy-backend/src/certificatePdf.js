@@ -5,6 +5,7 @@ const path = require('node:path');
 const { PDFDocument, StandardFonts, rgb, degrees } = require('pdf-lib');
 const { isWinAnsi } = require('./validation');
 const { localDate } = require('./util');
+const { drawMappings } = require('./placeholders');
 
 const LOGO_PATH = path.join(__dirname, '..', 'assets', 'certificate-logo.png');
 let logoBytes = null;
@@ -115,6 +116,8 @@ function fieldText(id, data, config) {
       return data.certificateId;
     case 'verifyUrl':
       return verifyLink(config.certVerifyUrl, data.certificateId);
+    case 'studentId':
+      return data.studentId || '';
     default:
       return '';
   }
@@ -133,6 +136,8 @@ async function renderOnTemplate(doc, data, config, template) {
     page = doc.addPage([template.pageWidth, template.pageHeight]);
     page.drawImage(img, { x: 0, y: 0, width: template.pageWidth, height: template.pageHeight });
   }
+  // Placeholders in the design itself first, so the positioned details below are never covered.
+  await drawMappings(doc, [page], template.layout.placeholders, (id) => printable(fieldText(id, data, config)));
   const { width: W, height: H } = page.getSize();
   const fonts = new Map();
   for (const [id, field] of Object.entries(template.layout.fields)) {
@@ -159,7 +164,7 @@ async function renderOnTemplate(doc, data, config, template) {
 
 /**
  * Render the certificate for one registration: on an uploaded template when given, otherwise the built-in design.
- * data: { certificateId, name, college?, sessionTitle, sessionDate, venue, mode, issuedAt, revoked?, preview? }
+ * data: { certificateId, name, college?, studentId?, sessionTitle, sessionDate, venue, mode, issuedAt, revoked?, preview? }
  * A revoked certificate is stamped REVOKED; a preview (before the certificate is issued) is stamped PREVIEW.
  */
 async function renderCertificatePdf(data, config, template = null) {
@@ -317,6 +322,7 @@ function certificateData(r) {
       certificateId: r.certificate_id,
       name: r.name,
       college: r.college,
+      studentId: r.student_code ?? null,
       sessionTitle: r.session_title,
       sessionDate: r.session_date,
       venue: r.session_venue,
@@ -329,6 +335,7 @@ function certificateData(r) {
     certificateId: r.certificateId,
     name: r.name,
     college: r.college,
+    studentId: r.studentCode ?? null,
     sessionTitle: r.session.title,
     sessionDate: r.session.sessionDate,
     venue: r.session.venue,
@@ -338,4 +345,4 @@ function certificateData(r) {
   };
 }
 
-module.exports = { renderCertificatePdf, certificateData, longDate, verifyLink };
+module.exports = { renderCertificatePdf, certificateData, longDate, verifyLink, printable, getLogo, drawStamp };

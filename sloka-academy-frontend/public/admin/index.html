@@ -10,19 +10,22 @@
   <title>Sloka Academy Admin</title>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="app.css">
-  <script src="app.js" defer></script>
+  <script type="module" src="main.js"></script>
 </head>
 <body>
   <header class="topbar" id="topbar" hidden>
     <a class="brand" href="#/">Sloka Academy <span>Admin</span></a>
     <nav class="nav" id="nav" aria-label="Main">
       <a href="#/" data-route="overview">Overview</a>
-      <a href="#/students" data-route="students">Students</a>
-      <a href="#/sessions" data-route="sessions">Sessions</a>
-      <a href="#/certificates" data-route="certificates">Certificates</a>
-      <a href="#/enquiries" data-route="enquiries">Internship enquiries</a>
-      <a href="#/settings" data-route="settings" data-requires="manage" hidden>Settings</a>
-      <a href="#/users" data-route="users" data-requires="manage" hidden>Users</a>
+      <a href="#/registrations" data-route="registrations" data-requires="registrations.view" hidden>Registrations</a>
+      <a href="#/students" data-route="students" data-requires="students.view" hidden>Students</a>
+      <a href="#/enquiries" data-route="enquiries" data-requires="enquiries.view" hidden>Enquiries</a>
+      <a href="#/sessions" data-route="sessions" data-requires="sessions.view" hidden>Sessions</a>
+      <a href="#/certificates" data-route="certificates" data-requires="certificates.view" hidden>Certificates</a>
+      <a href="#/associates" data-route="associates" data-requires="associates.view" hidden>Associates</a>
+      <a href="#/roles" data-route="roles" data-requires="roles.view" hidden>Roles</a>
+      <a href="#/audit" data-route="audit" data-requires="audit.view" hidden>Audit log</a>
+      <a href="#/settings" data-route="settings" data-requires="settings.view certTemplates.view offerTemplates.view courses.view" hidden>Settings</a>
     </nav>
     <div class="who">
       <a href="#/account" id="who-name" data-route="account"></a>

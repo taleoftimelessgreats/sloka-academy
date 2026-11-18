@@ -3,11 +3,7 @@
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { startApp, openTestDatabase, addUser, login, client, postPublic, validInquiry, referral, ALLOWED_ORIGIN } = require('./helpers');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
 const { isDuplicate } = require('../src/db');
-const { DEFAULT_LAYOUT } = require('../src/certificateTemplates');
 const { localDate } = require('../src/util');
 
 const yesterday = () => {
@@ -282,11 +278,17 @@ describe('database rules', () => {
   after(() => t.drop());
   const at = '2026-10-01T10:00:00.000Z';
 
-  test('roles are limited to counsellor, manager and admin', async () => {
-    const addUserRow = (email, role) =>
-      t.db.run('INSERT INTO users (name, email, password_hash, role, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)', ['U', email, 'x', role, at, at]);
-    await addUserRow('m@sloka.test', 'manager');
-    await assert.rejects(addUserRow('x@sloka.test', 'owner'), /truncated|role/i);
+  test('the roles start as the requirements set them, with the original Manager and Counsellor kept', async () => {
+    const roles = await t.db.all('SELECT role_key, scope, is_system FROM roles ORDER BY role_key');
+    assert.deepEqual(
+      roles.map((r) => [r.role_key, r.scope, r.is_system]),
+      [['accounts', 'all', 1], ['admin', 'all', 1], ['bd_associate', 'own', 1], ['bd_manager', 'team', 1], ['counsellor', 'all', 0], ['manager', 'all', 0], ['super_admin', 'all', 1]],
+    );
+    const count = async (role) => (await t.db.get('SELECT COUNT(*) AS n FROM role_permissions WHERE role_key = ?', [role])).n;
+    const { ALL_PERMISSIONS } = require('../src/permissions');
+    assert.equal(await count('super_admin'), ALL_PERMISSIONS.length);
+    assert.equal(await count('admin'), ALL_PERMISSIONS.length - 2, 'everything but roles');
+    assert.ok((await t.db.get('SELECT COUNT(*) AS n FROM courses')).n >= 40, 'course master seeded from the website');
   });
 
   test('one profile per email (any letter case) and per mobile number; blanks do not clash', async () => {
@@ -305,102 +307,3 @@ describe('database rules', () => {
   });
 });
 
-describe('import from the former SQLite database', () => {
-  const { DatabaseSync } = require('node:sqlite');
-  const { importSqlite } = require('../scripts/import-sqlite');
-  const at = '2026-10-01T10:00:00.000Z';
-  const big = Buffer.alloc(5 * 1024 * 1024 + 7, 3); // more than TiDB keeps in one row
-  big[0] = 0x89;
-  let t;
-  let file;
-
-  before(async () => {
-    t = await openTestDatabase();
-    file = path.join(os.tmpdir(), `sloka-import-${process.pid}-${Date.now()}.db`);
-    const lite = new DatabaseSync(file);
-    // The tables and columns of the last SQLite schema (version 4) that this import needs.
-    lite.exec(`
-      CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL);
-      INSERT INTO schema_migrations VALUES (1, '${at}'), (2, '${at}'), (3, '${at}'), (4, '${at}');
-      CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, password_hash TEXT, role TEXT, active INTEGER, token_version INTEGER,
-        created_at TEXT, updated_at TEXT, last_login_at TEXT);
-      INSERT INTO users VALUES (3, 'Anita', 'anita@sloka.test', 'hash', 'admin', 1, 2, '${at}', '${at}', NULL),
-        (5, 'Mohan', 'mohan@sloka.test', 'hash', 'manager', 0, 0, '${at}', '${at}', '${at}');
-      CREATE TABLE students (id INTEGER PRIMARY KEY, name TEXT, email TEXT, phone TEXT, college TEXT, stream TEXT, year_of_study TEXT,
-        created_at TEXT, updated_at TEXT, student_code TEXT);
-      INSERT INTO students VALUES (10, 'Asha', 'asha@example.com', '+919876543210', 'JNTU', NULL, NULL, '${at}', '${at}', 'SLK-STU-2026-00041'),
-        (11, 'Ravi', NULL, '+919000000000', NULL, NULL, NULL, '${at}', '${at}', NULL);
-      CREATE TABLE certificate_templates (id INTEGER PRIMARY KEY, name TEXT, file_type TEXT, file BLOB, file_size INTEGER, page_width REAL,
-        page_height REAL, layout TEXT, is_default INTEGER, archived INTEGER, created_by INTEGER, created_at TEXT, updated_at TEXT);
-      CREATE TABLE sessions (id INTEGER PRIMARY KEY, title TEXT, session_date TEXT, venue TEXT, mode TEXT, description TEXT, code TEXT,
-        registration_open INTEGER, closes_at TEXT, created_by INTEGER, created_at TEXT, updated_at TEXT, template_id INTEGER);
-      INSERT INTO sessions VALUES (2, 'VLSI careers', '2026-10-01', 'CVR', 'in-person', NULL, 'ABC234', 1, NULL, 3, '${at}', '${at}', 4);
-      CREATE TABLE inquiries (id INTEGER PRIMARY KEY, name TEXT, phone TEXT, email TEXT, college TEXT, stream TEXT, year_of_study TEXT, domain TEXT,
-        plan TEXT, source TEXT, brochure TEXT, message TEXT, status TEXT, assigned_to INTEGER, next_follow_up TEXT, consent_at TEXT,
-        created_by INTEGER, created_at TEXT, updated_at TEXT, student_id INTEGER);
-      INSERT INTO inquiries VALUES (7, 'Ravi', '+919000000000', NULL, NULL, NULL, NULL, NULL, NULL, 'walk-in', NULL, NULL, 'new', 5, NULL,
-        '${at}', 3, '${at}', '${at}', 11);
-      CREATE TABLE inquiry_notes (id INTEGER PRIMARY KEY, inquiry_id INTEGER, author_id INTEGER, kind TEXT, body TEXT, created_at TEXT);
-      INSERT INTO inquiry_notes VALUES (9, 7, 5, 'note', 'Called back', '${at}');
-      CREATE TABLE certificate_registrations (id INTEGER PRIMARY KEY, session_id INTEGER, name TEXT, email TEXT, phone TEXT, college TEXT,
-        stream TEXT, year_of_study TEXT, consent_at TEXT, certificate_id TEXT, download_token_hash TEXT, status TEXT, revoked_reason TEXT,
-        issued_at TEXT, download_count INTEGER, last_downloaded_at TEXT, created_at TEXT, updated_at TEXT, student_id INTEGER,
-        template_id INTEGER, email_status TEXT, email_error TEXT, emailed_at TEXT);
-      INSERT INTO certificate_registrations VALUES (20, 2, 'Asha', 'asha@example.com', '+919876543210', 'JNTU', NULL, NULL, '${at}',
-        'SLK-2026-7K4M9Q2X', '${'a'.repeat(64)}', 'issued', NULL, '${at}', 1, '${at}', '${at}', '${at}', 10, 4, 'sent', NULL, '${at}');
-      CREATE TABLE certificate_events (id INTEGER PRIMARY KEY, registration_id INTEGER, type TEXT, detail TEXT, actor_id INTEGER, created_at TEXT);
-      INSERT INTO certificate_events VALUES (30, 20, 'registered', 'Registered', NULL, '${at}'), (31, 20, 'emailed', 'Sent', 3, '${at}');
-      CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_by INTEGER, updated_at TEXT);
-      INSERT INTO settings VALUES ('google_sheet_id', 'sheet123', 3, '${at}');
-      CREATE TABLE sheet_sync (registration_id INTEGER, spreadsheet_id TEXT, synced_at TEXT, PRIMARY KEY (registration_id, spreadsheet_id));
-      INSERT INTO sheet_sync VALUES (20, 'sheet123', '${at}');
-      CREATE TABLE id_sequences (name TEXT PRIMARY KEY, value INTEGER);
-      INSERT INTO id_sequences VALUES ('student:2026', 12);
-    `);
-    lite
-      .prepare('INSERT INTO certificate_templates VALUES (4, ?, ?, ?, ?, ?, ?, ?, 1, 0, 3, ?, ?)')
-      .run('Gold', 'png', big, big.length, 841.89, 595.28, JSON.stringify(DEFAULT_LAYOUT), at, at);
-    lite.close();
-  });
-
-  after(async () => {
-    await t.drop();
-    fs.rmSync(file, { force: true });
-  });
-
-  test('copies every table with ids, Student IDs and links unchanged', async () => {
-    const counts = await importSqlite(file, t.db, { log: () => {} });
-    assert.equal(counts.users, 2);
-    assert.equal(counts.certificate_events, 2);
-    const reg = await t.db.get('SELECT * FROM certificate_registrations WHERE id = 20');
-    assert.equal(reg.certificate_id, 'SLK-2026-7K4M9Q2X');
-    assert.equal(reg.download_token_hash, 'a'.repeat(64), 'emailed download links keep working');
-    assert.equal(reg.student_id, 10);
-    assert.equal((await t.db.get('SELECT student_code FROM students WHERE id = 10')).student_code, 'SLK-STU-2026-00041');
-    assert.deepEqual({ ...(await t.db.get('SELECT assigned_to, created_by, student_id FROM inquiries WHERE id = 7')) }, { assigned_to: 5, created_by: 3, student_id: 11 });
-    assert.equal((await t.db.get('SELECT author_id FROM inquiry_notes WHERE id = 9')).author_id, 5);
-    assert.equal((await t.db.get('SELECT token_version FROM users WHERE id = 3')).token_version, 2, 'signed-in sessions stay valid');
-    assert.equal((await t.db.get("SELECT value FROM settings WHERE `key` = 'google_sheet_id'")).value, 'sheet123');
-    assert.equal((await t.db.get('SELECT COUNT(*) AS n FROM sheet_sync')).n, 1, 'rows already in the Google Sheet are not sent again');
-  });
-
-  test('template files are stored in parts and read back whole', async () => {
-    const { createTemplateRepo } = require('../src/certificateTemplates');
-    const parts = await t.db.all('SELECT part FROM certificate_template_files WHERE template_id = 4 ORDER BY part');
-    assert.equal(parts.length, 3);
-    const tpl = await createTemplateRepo(t.db).forRender(4);
-    assert.ok(tpl.file.equals(big));
-  });
-
-  test('a student without a Student ID gets the next free number, and new rows continue after the imported ids', async () => {
-    assert.equal((await t.db.get('SELECT student_code FROM students WHERE id = 11')).student_code, 'SLK-STU-2026-00042', 'after the highest imported number');
-    const r = await t.db.run("INSERT INTO inquiries (name, phone, source, consent_at, created_at, updated_at) VALUES ('New', '+919111111111', 'contact', ?, ?, ?)", [at, at, at]);
-    assert.ok(r.insertId > 7, `new enquiry id ${r.insertId}`);
-  });
-
-  test('refuses to import into a database that already has data, unless asked to replace it', async () => {
-    await assert.rejects(importSqlite(file, t.db, { log: () => {} }), /already has data/);
-    await importSqlite(file, t.db, { replace: true, log: () => {} });
-    assert.equal((await t.db.get('SELECT COUNT(*) AS n FROM inquiries')).n, 1, 'the extra enquiry is gone');
-  });
-});

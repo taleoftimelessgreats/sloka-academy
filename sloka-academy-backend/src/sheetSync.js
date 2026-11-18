@@ -270,4 +270,4 @@ function createSheetSync({ db, config, settings, logger = console, fetchImpl, cl
   };
 }
 
-module.exports = { createSheetSync, createSettings, toRow, toReferralRow, HEADER, TAB, REFERRAL_HEADER, REFERRAL_TAB };
+module.exports = { createSheetSync, createSettings, toRow };

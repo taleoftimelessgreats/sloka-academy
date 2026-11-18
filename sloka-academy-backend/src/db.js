@@ -2,6 +2,7 @@
 
 const { AsyncLocalStorage } = require('node:async_hooks');
 const mysql = require('mysql2/promise');
+const { DEFAULT_ROLES } = require('./permissions');
 
 // utf8mb4_general_ci makes comparisons, LIKE searches and unique keys case-insensitive (TiDB's own
 // default, utf8mb4_bin, is case-sensitive). AUTO_ID_CACHE=1 keeps TiDB's auto-increment ids consecutive;
@@ -264,6 +265,230 @@ const MIGRATIONS = [
       'CREATE INDEX IF NOT EXISTS idx_inquiries_referred_by ON inquiries (referred_by)',
     ],
   },
+  {
+    // Roles & permissions, associates, the audit log, internship registrations (course master, enrollments,
+    // payment ledger) and offer letters. See permissions.js, registrationRepo.js and offerLetters.js.
+    version: 4,
+    statements: [
+      // Roles are rows of `roles` now (custom roles), so users.role is the role's key.
+      'ALTER TABLE users MODIFY COLUMN role VARCHAR(40) NOT NULL',
+      // Associate details. Older accounts have none of them until they are edited.
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS employee_id VARCHAR(40)',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile VARCHAR(20)',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS department VARCHAR(40)',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS designation VARCHAR(100)',
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS reporting_manager_id BIGINT',
+      `ALTER TABLE users ADD COLUMN IF NOT EXISTS date_of_joining ${DAY}`,
+      'ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password TINYINT(1) NOT NULL DEFAULT 0',
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_users_employee_id ON users (employee_id)',
+      'CREATE INDEX IF NOT EXISTS idx_users_manager ON users (reporting_manager_id)',
+
+      `CREATE TABLE IF NOT EXISTS roles (
+        role_key    VARCHAR(40)  NOT NULL PRIMARY KEY,
+        name        VARCHAR(100) NOT NULL,
+        description VARCHAR(500),
+        scope       ENUM('own', 'team', 'all') NOT NULL DEFAULT 'own', -- which registrations and offer letters it sees
+        is_system   TINYINT(1)   NOT NULL DEFAULT 0,                   -- the five roles of the requirements: never deleted
+        created_at  ${TS}        NOT NULL,
+        updated_at  ${TS}        NOT NULL,
+        UNIQUE KEY uq_roles_name (name)
+      ) ${TABLE}`,
+      `CREATE TABLE IF NOT EXISTS role_permissions (
+        role_key   VARCHAR(40) NOT NULL,
+        permission VARCHAR(64) NOT NULL, -- '<module>.<action>', see permissions.js
+        PRIMARY KEY (role_key, permission),
+        CONSTRAINT fk_role_permissions_role FOREIGN KEY (role_key) REFERENCES roles (role_key) ON DELETE CASCADE
+      ) ${TABLE}`,
+      // Per-associate grants (granted = 1) and revocations (granted = 0) on top of their role.
+      `CREATE TABLE IF NOT EXISTS user_permission_overrides (
+        user_id    BIGINT      NOT NULL,
+        permission VARCHAR(64) NOT NULL,
+        granted    TINYINT(1)  NOT NULL,
+        PRIMARY KEY (user_id, permission),
+        CONSTRAINT fk_overrides_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+      ) ${TABLE}`,
+
+      `CREATE TABLE IF NOT EXISTS audit_log (
+        id         BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        actor_id   BIGINT,                 -- NULL = the system
+        entity     VARCHAR(40)  NOT NULL,  -- e.g. 'enrollment', 'payment', 'student', 'role', 'associate'
+        entity_id  VARCHAR(64),
+        action     VARCHAR(40)  NOT NULL,  -- e.g. 'create', 'update', 'delete'
+        summary    VARCHAR(500) NOT NULL,
+        changes    TEXT,                   -- JSON [{ field, from, to }]
+        created_at ${TS}        NOT NULL,
+        KEY idx_audit_created (created_at),
+        KEY idx_audit_entity (entity, entity_id),
+        CONSTRAINT fk_audit_actor FOREIGN KEY (actor_id) REFERENCES users (id) ON DELETE SET NULL
+      ) ${TABLE}`,
+
+      // Student master details collected by the registration form.
+      'ALTER TABLE students ADD COLUMN IF NOT EXISTS gender VARCHAR(20)',
+      `ALTER TABLE students ADD COLUMN IF NOT EXISTS date_of_birth ${DAY}`,
+      'ALTER TABLE students ADD COLUMN IF NOT EXISTS qualification VARCHAR(100)',
+      'ALTER TABLE students ADD COLUMN IF NOT EXISTS specialization VARCHAR(150)',
+      'ALTER TABLE students ADD COLUMN IF NOT EXISTS graduation_year SMALLINT',
+      'ALTER TABLE students ADD COLUMN IF NOT EXISTS city VARCHAR(100)',
+      'ALTER TABLE students ADD COLUMN IF NOT EXISTS state VARCHAR(100)',
+
+      // Offer letter templates: an optional background (as certificate designs) and the letter's text.
+      `CREATE TABLE IF NOT EXISTS offer_templates (
+        id          BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        name        VARCHAR(255) NOT NULL,
+        file_type   ENUM('pdf', 'png', 'jpeg'),  -- NULL = the built-in Sloka letterhead
+        file_size   INT,
+        page_width  DOUBLE       NOT NULL,       -- PDF points
+        page_height DOUBLE       NOT NULL,
+        body        TEXT         NOT NULL,       -- with {{placeholders}} and **bold**
+        layout      TEXT         NOT NULL,       -- JSON: margins, font, size, colour, line height
+        is_default  TINYINT(1)   NOT NULL DEFAULT 0,
+        active      TINYINT(1)   NOT NULL DEFAULT 0,
+        created_by  BIGINT,
+        created_at  ${TS}        NOT NULL,
+        updated_at  ${TS}        NOT NULL,
+        CONSTRAINT fk_offer_templates_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ${TABLE}`,
+      `CREATE TABLE IF NOT EXISTS offer_template_files (
+        template_id BIGINT     NOT NULL,
+        part        INT        NOT NULL,
+        data        MEDIUMBLOB NOT NULL,
+        PRIMARY KEY (template_id, part),
+        CONSTRAINT fk_offer_template_files_template FOREIGN KEY (template_id) REFERENCES offer_templates (id) ON DELETE CASCADE
+      ) ${TABLE}`,
+
+      // Course master: the internship course domains a student can register for.
+      `CREATE TABLE IF NOT EXISTS courses (
+        id                BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        name              VARCHAR(150) NOT NULL,
+        duration          VARCHAR(60)  NOT NULL,  -- as printed on the offer letter, e.g. "2 months"
+        active            TINYINT(1)   NOT NULL DEFAULT 1,
+        offer_template_id BIGINT,                 -- NULL = the default offer letter template
+        created_at        ${TS}        NOT NULL,
+        updated_at        ${TS}        NOT NULL,
+        UNIQUE KEY uq_courses_name (name),
+        CONSTRAINT fk_courses_offer_template FOREIGN KEY (offer_template_id) REFERENCES offer_templates (id)
+      ) ${TABLE}`,
+
+      // One internship registration of a student (a student may register for several course domains).
+      // Amounts are in paise. paid_paise and payment_status follow the payments (registrationRepo.recalculate).
+      `CREATE TABLE IF NOT EXISTS enrollments (
+        id               BIGINT  NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        student_id       BIGINT  NOT NULL,
+        course_id        BIGINT  NOT NULL,
+        batch_start_date ${DAY}  NOT NULL,
+        fee_paise        BIGINT  NOT NULL,          -- committed program fee, negotiated per student
+        paid_paise       BIGINT  NOT NULL DEFAULT 0,
+        payment_status   ENUM('slot-confirmed', 'partially-paid', 'fully-paid') NOT NULL DEFAULT 'slot-confirmed',
+        balance_due_date ${DAY},                    -- required while a balance remains
+        bd_associate_id  BIGINT,
+        registration_date ${DAY} NOT NULL,
+        remarks          TEXT,
+        created_by       BIGINT,
+        created_at       ${TS}   NOT NULL,
+        updated_at       ${TS}   NOT NULL,
+        KEY idx_enrollments_student (student_id),
+        KEY idx_enrollments_bd (bd_associate_id),
+        KEY idx_enrollments_registered (registration_date),
+        KEY idx_enrollments_due (balance_due_date),
+        KEY idx_enrollments_course (course_id),
+        CONSTRAINT fk_enrollments_student FOREIGN KEY (student_id) REFERENCES students (id),
+        CONSTRAINT fk_enrollments_course FOREIGN KEY (course_id) REFERENCES courses (id),
+        CONSTRAINT fk_enrollments_bd FOREIGN KEY (bd_associate_id) REFERENCES users (id) ON DELETE SET NULL,
+        CONSTRAINT fk_enrollments_created_by FOREIGN KEY (created_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ${TABLE}`,
+      `CREATE TABLE IF NOT EXISTS payments (
+        id            BIGINT      NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        enrollment_id BIGINT      NOT NULL,
+        kind          ENUM('token', 'instalment') NOT NULL,
+        amount_paise  BIGINT      NOT NULL,
+        mode          VARCHAR(30) NOT NULL,
+        reference     VARCHAR(100),
+        paid_on       ${DAY}      NOT NULL,
+        recorded_by   BIGINT,
+        created_at    ${TS}       NOT NULL,
+        updated_at    ${TS}       NOT NULL,
+        KEY idx_payments_enrollment (enrollment_id, paid_on),
+        CONSTRAINT fk_payments_enrollment FOREIGN KEY (enrollment_id) REFERENCES enrollments (id) ON DELETE CASCADE,
+        CONSTRAINT fk_payments_recorded_by FOREIGN KEY (recorded_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ${TABLE}`,
+
+      // The offer letter of an enrollment. `content` is a snapshot (JSON: placeholder values, body, layout), so
+      // the letter stays as it was generated until it is regenerated; the PDF is rendered from it on demand.
+      `CREATE TABLE IF NOT EXISTS offer_letters (
+        id            BIGINT      NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        offer_code    VARCHAR(40) NOT NULL,   -- SLK/OL/2026/0001
+        enrollment_id BIGINT      NOT NULL,
+        template_id   BIGINT,                 -- NULL = built-in letterhead
+        content       TEXT        NOT NULL,
+        offer_date    ${DAY}      NOT NULL,
+        status        ENUM('generated', 'sent', 'failed') NOT NULL DEFAULT 'generated',
+        email_error   TEXT,
+        sent_at       ${TS},
+        generated_by  BIGINT,
+        generated_at  ${TS}       NOT NULL,
+        updated_at    ${TS}       NOT NULL,
+        UNIQUE KEY uq_offer_letters_code (offer_code),
+        UNIQUE KEY uq_offer_letters_enrollment (enrollment_id),
+        CONSTRAINT fk_offer_letters_enrollment FOREIGN KEY (enrollment_id) REFERENCES enrollments (id) ON DELETE CASCADE,
+        CONSTRAINT fk_offer_letters_template FOREIGN KEY (template_id) REFERENCES offer_templates (id),
+        CONSTRAINT fk_offer_letters_generated_by FOREIGN KEY (generated_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ${TABLE}`,
+      `CREATE TABLE IF NOT EXISTS offer_letter_events (
+        id              BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        offer_letter_id BIGINT NOT NULL,
+        type            ENUM('generated', 'regenerated', 'sent', 'failed') NOT NULL,
+        detail          TEXT,
+        actor_id        BIGINT,
+        created_at      ${TS}  NOT NULL,
+        KEY idx_offer_events_letter (offer_letter_id, created_at),
+        CONSTRAINT fk_offer_events_letter FOREIGN KEY (offer_letter_id) REFERENCES offer_letters (id) ON DELETE CASCADE,
+        CONSTRAINT fk_offer_events_actor FOREIGN KEY (actor_id) REFERENCES users (id) ON DELETE SET NULL
+      ) ${TABLE}`,
+
+      // A BD Associate said a registration's mobile number or email is NOT the student it belongs to: the
+      // registration is blocked and an admin reviews the conflict.
+      `CREATE TABLE IF NOT EXISTS registration_flags (
+        id              BIGINT       NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        entered         TEXT         NOT NULL, -- JSON: the details the associate entered
+        matched         TEXT         NOT NULL, -- JSON: the student records they matched (ids, codes, names)
+        note            VARCHAR(500),
+        status          ENUM('open', 'resolved') NOT NULL DEFAULT 'open',
+        raised_by       BIGINT,
+        resolved_by     BIGINT,
+        resolution_note VARCHAR(500),
+        resolved_at     ${TS},
+        created_at      ${TS}        NOT NULL,
+        KEY idx_flags_status (status, created_at),
+        CONSTRAINT fk_flags_raised_by FOREIGN KEY (raised_by) REFERENCES users (id) ON DELETE SET NULL,
+        CONSTRAINT fk_flags_resolved_by FOREIGN KEY (resolved_by) REFERENCES users (id) ON DELETE SET NULL
+      ) ${TABLE}`,
+    ],
+    async up(db) {
+      // The portal's original admins become Super Admins (they managed admins); 'admin' is now the Admin role.
+      await db.run("UPDATE users SET role = 'super_admin' WHERE role = 'admin'");
+      const now = new Date().toISOString();
+      for (const r of DEFAULT_ROLES) {
+        await db.run('INSERT IGNORE INTO roles (role_key, name, description, scope, is_system, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)', [
+          r.key, r.name, r.description, r.scope, r.system ? 1 : 0, now, now,
+        ]);
+        for (const p of r.permissions) await db.run('INSERT IGNORE INTO role_permissions (role_key, permission) VALUES (?, ?)', [r.key, p]);
+      }
+      for (const name of COURSE_SEED) {
+        await db.run("INSERT IGNORE INTO courses (name, duration, active, created_at, updated_at) VALUES (?, '2 months', 1, ?, ?)", [name, now, now]);
+      }
+    },
+  },
+];
+
+// The website's internship domains (sloka-academy-frontend/src/data/domains.ts) when the course master was added.
+const COURSE_SEED = [
+  '.NET', 'Java Programming', 'Java Full Stack', 'Python Programming', 'Python Full Stack Development', 'Full Stack',
+  'Data Structures', 'Selenium Testing with Java', 'ServiceNow', 'Salesforce', 'SAP', 'UI/UX Design', 'Digital Marketing',
+  'AI/ML', 'Agentic AI', 'Data Analytics', 'Data Engineering', 'Data Science', 'Business Analytics', 'AWS', 'DevOps',
+  'Cyber Security', 'Blockchain', 'Quantum Computing', 'Generative AI & LLM', 'Embedded Systems', 'Internet of Things (IoT)',
+  'Robotics', 'VLSI', 'Hybrid Electric Vehicles', 'AutoCAD', 'Nano Science & Nanotechnology', 'Bioinformatics',
+  'Genetic Engineering', 'Clinical SAS', 'Medical Coding', 'Pharmacovigilance', 'Entrepreneurship', 'Finance', 'HR',
+  'Investment Banking', 'Supply Chain Management',
 ];
 
 // Worth running a transaction again for: lock wait timeout, deadlock, and TiDB's write conflicts.
@@ -423,4 +648,4 @@ async function openDatabase(settings, { createIfMissing = true } = {}) {
   return db;
 }
 
-module.exports = { openDatabase, migrate, isDuplicate, connectionOptions, MIGRATIONS };
+module.exports = { openDatabase, isDuplicate };

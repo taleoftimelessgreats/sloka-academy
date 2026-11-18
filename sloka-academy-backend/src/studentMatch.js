@@ -147,4 +147,4 @@ async function pruneStudent(db, studentId) {
   await db.run('DELETE FROM students WHERE id = ?', [studentId]);
 }
 
-module.exports = { linkStudent, attachToProfile, createProfile, compareWithProfiles, pruneStudent, profileOf, PROFILE_COLUMNS: COLUMNS };
+module.exports = { linkStudent, attachToProfile, createProfile, pruneStudent, profileOf, PROFILE_COLUMNS: COLUMNS };

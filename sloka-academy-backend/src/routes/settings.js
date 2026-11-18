@@ -4,10 +4,10 @@ const express = require('express');
 const { parseWebAppUrl, isTestDeploymentUrl } = require('../sheets');
 const { validationError } = require('../util');
 
-/** Managers and admins: integrations (Google Sheet connection and sync, email status). */
-function settingsRouter({ config, sheetSync, delivery, auth }) {
+/** Integrations (Google Sheet connection and sync, email status): settings.view; connecting the sheet: settings.edit. */
+function settingsRouter({ config, sheetSync, delivery, auth, audit }) {
   const router = express.Router();
-  const exporter = auth.requirePermission('export');
+  const editor = auth.requirePermission('settings.edit');
 
   const status = async () => ({
     googleSheet: await sheetSync.status(),
@@ -27,14 +27,14 @@ function settingsRouter({ config, sheetSync, delivery, auth }) {
   });
 
   // The Apps Script for the sheet. It holds the secret that lets the portal add rows, so only those who
-  // may export student data see it.
-  router.get('/google-sheet/script', exporter, async (req, res) => {
+  // may connect the sheet see it.
+  router.get('/google-sheet/script', editor, async (req, res) => {
     res.json({ script: await sheetSync.script() });
   });
 
   // Save (or clear) the Apps Script web app that registrations are sent to. A new sheet receives every
-  // registration, so choosing it counts as exporting student data.
-  router.put('/google-sheet', exporter, async (req, res) => {
+  // registration, so choosing it is like exporting student data.
+  router.put('/google-sheet', editor, async (req, res) => {
     const raw = req.body && typeof req.body.url === 'string' ? req.body.url.trim() : '';
     if (raw.length > 500) throw validationError({ url: 'That link is too long.' });
     const url = raw ? parseWebAppUrl(raw) : '';
@@ -46,6 +46,7 @@ function settingsRouter({ config, sheetSync, delivery, auth }) {
       });
     }
     await sheetSync.setWebApp(url, req.user.id);
+    await audit.log({ actorId: req.user.id, entity: 'settings', entityId: 'google_sheet', action: url ? 'connect' : 'disconnect', summary: url ? 'Connected the Google Sheet' : 'Disconnected the Google Sheet' });
     let check = null;
     if (url) {
       try {

@@ -559,4 +559,4 @@ function createCertificateRepo(db, config) {
   };
 }
 
-module.exports = { createCertificateRepo, parseRegFilters, regToApi, sessionToApi, REG_SELECT, EMAIL_STATUSES };
+module.exports = { createCertificateRepo, parseRegFilters, regToApi, REG_SELECT };

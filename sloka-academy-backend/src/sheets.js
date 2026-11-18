@@ -157,4 +157,4 @@ function createSheetsClient(webAppUrl, secret, { fetchImpl = fetch } = {}) {
   };
 }
 
-module.exports = { parseWebAppUrl, isTestDeploymentUrl, newSecret, appsScript, createSheetsClient, SheetsError };
+module.exports = { parseWebAppUrl, isTestDeploymentUrl, newSecret, appsScript, createSheetsClient };

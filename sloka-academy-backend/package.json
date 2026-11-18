@@ -8,8 +8,7 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "test": "node --test test/*.test.js",
-    "create-admin": "node scripts/create-admin.js",
-    "import-sqlite": "node scripts/import-sqlite.js"
+    "create-admin": "node scripts/create-admin.js"
   },
   "engines": {
     "node": ">=22.13"
@@ -24,6 +23,7 @@
     "jsonwebtoken": "^9.0.3",
     "mysql2": "^3.24.6",
     "nodemailer": "^10.2.1",
-    "pdf-lib": "^1.17.1"
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "6.4.299"
   }
 }

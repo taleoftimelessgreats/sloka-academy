@@ -9,6 +9,9 @@ const {
   validateLayout,
   inspectTemplateFile,
   TemplateFileError,
+  PLACEHOLDER_FIELDS,
+  initialLayout,
+  detectPlaceholders,
 } = require('../certificateTemplates');
 const { renderCertificatePdf } = require('../certificatePdf');
 const { validateTemplateName } = require('../validation');
@@ -23,10 +26,13 @@ function parseId(raw) {
   return Number(raw);
 }
 
-/** Certificate designs: uploaded templates (PDF or image) and where each detail is printed on them. */
-function templatesRouter({ config, templateRepo, auth }) {
+/**
+ * Certificate designs: uploaded templates (PDF or image), where each detail is printed on them, and the
+ * placeholders found in a PDF's text with the detail each one is replaced by.
+ */
+function templatesRouter({ config, templateRepo, auth, audit }) {
   const router = express.Router();
-  const manage = auth.requirePermission('manage');
+  const may = (action) => auth.requirePermission(`certTemplates.${action}`);
   const upload = express.raw({ type: UPLOAD_TYPES, limit: config.templateMaxBytes });
 
   async function load(id) {
@@ -48,13 +54,15 @@ function templatesRouter({ config, templateRepo, auth }) {
     venue: 'CVR College of Engineering, Hyderabad',
     mode: 'in-person',
     issuedAt: new Date().toISOString(),
+    studentId: `${config.studentIdPrefix}-STU-${new Date().getFullYear()}-00042`,
   });
 
-  // Any signed-in user: the session form lists the designs.
-  router.get('/', async (req, res) => {
+  // The session form lists the designs.
+  router.get('/', auth.requireAny('certTemplates.view', 'sessions.create', 'sessions.edit'), async (req, res) => {
     res.json({
       ...(await listing()),
       fields: TEMPLATE_FIELDS.map(([id, label]) => ({ id, label })),
+      placeholderFields: PLACEHOLDER_FIELDS.map(({ id, label }) => ({ id, label })),
       fonts: FONTS.map(([id, label]) => ({ id, label })),
       aligns: ALIGNS,
       defaultLayout: DEFAULT_LAYOUT,
@@ -63,7 +71,7 @@ function templatesRouter({ config, templateRepo, auth }) {
   });
 
   // Upload: raw file body (PDF, PNG or JPEG); the name travels in the query string.
-  router.post('/', manage, upload, async (req, res) => {
+  router.post('/', may('create'), upload, async (req, res) => {
     const { values, errors } = validateTemplateName(typeof req.query.name === 'string' ? req.query.name : '');
     if (hasErrors(errors)) throw validationError(errors);
     if (!Buffer.isBuffer(req.body) || !req.body.length) throw validationError({ file: 'Choose a PDF, PNG or JPEG file.' });
@@ -74,12 +82,17 @@ function templatesRouter({ config, templateRepo, auth }) {
       if (err instanceof TemplateFileError) throw validationError({ file: err.message });
       throw err;
     }
-    const template = await templateRepo.create({ name: values.name, file: req.body, ...info }, req.user.id);
-    res.status(201).json({ template });
+    const { placeholders, ...file } = info;
+    const template = await templateRepo.create({ name: values.name, file: req.body, ...file, layout: initialLayout(info) }, req.user.id);
+    await audit.log({
+      actorId: req.user.id, entity: 'certificate_template', entityId: template.id, action: 'upload',
+      summary: `Uploaded certificate design "${template.name}" (${file.fileType.toUpperCase()}, ${placeholders.length} placeholder${placeholders.length === 1 ? '' : 's'} found)`,
+    });
+    res.status(201).json({ template, placeholdersFound: placeholders.length });
   });
 
   // Which design new certificates use. { id: number } or { id: null } for the built-in Sloka design.
-  router.put('/default', manage, async (req, res) => {
+  router.put('/default', may('edit'), async (req, res) => {
     const raw = req.body ? req.body.id : undefined;
     if (raw === null) await templateRepo.setDefault(null);
     else {
@@ -91,7 +104,7 @@ function templatesRouter({ config, templateRepo, auth }) {
   });
 
   // Sample certificate for checking a layout before saving it. { templateId?: number|null, layout?: {...} }
-  router.post('/preview', manage, async (req, res) => {
+  router.post('/preview', may('view'), async (req, res) => {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     let template = null;
     if (body.templateId != null) {
@@ -110,11 +123,20 @@ function templatesRouter({ config, templateRepo, auth }) {
     res.send(Buffer.from(pdf));
   });
 
-  router.get('/:id', manage, async (req, res) => {
+  router.get('/:id', may('view'), async (req, res) => {
     res.json({ template: await load(parseId(req.params.id)) });
   });
 
-  router.get('/:id/file', manage, async (req, res) => {
+  // Look for placeholders in the design's file again, with a suggested detail for each. Nothing is saved:
+  // the editor merges them into the layout.
+  router.post('/:id/placeholders', may('edit'), async (req, res) => {
+    const id = parseId(req.params.id);
+    const t = await load(id);
+    const { file } = await templateRepo.forRender(id);
+    res.json({ placeholders: await detectPlaceholders(file, t.fileType, t.pageWidth), searched: t.fileType === 'pdf' });
+  });
+
+  router.get('/:id/file', may('view'), async (req, res) => {
     const id = parseId(req.params.id);
     const t = await load(id);
     const { file } = await templateRepo.forRender(id);
@@ -123,9 +145,9 @@ function templatesRouter({ config, templateRepo, auth }) {
     res.send(file);
   });
 
-  router.patch('/:id', manage, async (req, res) => {
+  router.patch('/:id', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
-    await load(id);
+    const before = await load(id);
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const changes = {};
     const errors = {};
@@ -144,16 +166,27 @@ function templatesRouter({ config, templateRepo, auth }) {
       else changes.archived = body.archived;
     }
     if (hasErrors(errors)) throw validationError(errors);
-    res.json({ template: await templateRepo.update(id, changes) });
+    const template = await templateRepo.update(id, changes);
+    const what = [changes.name !== undefined && changes.name !== before.name && 'name', changes.layout && 'layout', changes.archived !== undefined && (changes.archived ? 'archived' : 'restored')].filter(Boolean);
+    if (what.length) {
+      await audit.log({
+        actorId: req.user.id, entity: 'certificate_template', entityId: id, action: 'update', summary: `Changed certificate design "${template.name}": ${what.join(', ')}`,
+        changes: changes.name !== undefined && changes.name !== before.name ? [{ field: 'Name', from: before.name, to: changes.name }] : [],
+      });
+    }
+    res.json({ template });
   });
 
   // Only templates that no certificate or session uses can be deleted; others can be archived.
-  router.delete('/:id', auth.requirePermission('deleteRecords'), async (req, res) => {
-    const result = await templateRepo.remove(parseId(req.params.id));
+  router.delete('/:id', may('delete'), async (req, res) => {
+    const id = parseId(req.params.id);
+    const t = await templateRepo.get(id);
+    const result = await templateRepo.remove(id);
     if (result === 'not_found') throw new HttpError(404, { error: 'not_found' });
     if (result === 'in_use') {
       return res.status(409).json({ error: 'in_use', message: 'Certificates or sessions use this template, so it cannot be deleted. Archive it instead.' });
     }
+    await audit.log({ actorId: req.user.id, entity: 'certificate_template', entityId: id, action: 'delete', summary: `Deleted certificate design "${t.name}"` });
     return res.status(204).end();
   });
 

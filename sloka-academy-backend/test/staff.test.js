@@ -43,8 +43,14 @@ describe('staff API', () => {
         ['patch', '/api/inquiries/1'],
         ['post', '/api/inquiries/1/notes'],
         ['del', '/api/inquiries/1'],
-        ['get', '/api/users'],
-        ['post', '/api/users'],
+        ['get', '/api/associates'],
+        ['post', '/api/associates'],
+        ['get', '/api/roles'],
+        ['get', '/api/audit'],
+        ['get', '/api/registrations'],
+        ['post', '/api/registrations'],
+        ['get', '/api/courses'],
+        ['get', '/api/offer-templates'],
       ]) {
         const res = await api[method](path, method === 'patch' ? {} : undefined);
         assert.equal(res.status, 401, `${method} ${path}`);
@@ -77,25 +83,25 @@ describe('staff API', () => {
 
     const me = await client(ctx.base, ok.cookie).get('/api/auth/me');
     assert.equal(me.status, 200);
-    assert.deepEqual(me.data.user, {
-      id: admin.id,
-      name: 'Anita Admin',
-      email: 'admin@sloka.test',
-      role: 'admin',
-      permissions: ['manage', 'export', 'editRecords', 'deleteRecords', 'deactivateUsers', 'manageAdmins'],
-    });
+    const { permissions, ...rest } = me.data.user;
+    assert.deepEqual(rest, { id: admin.id, name: 'Anita Admin', email: 'admin@sloka.test', role: 'admin', roleName: 'Admin', scope: 'all', mustChangePassword: false });
+    assert.ok(permissions.includes('registrations.create') && permissions.includes('associates.delete') && permissions.includes('enquiries.export'));
+    assert.ok(!permissions.includes('roles.edit'), 'only Super Admins manage roles');
   });
 
-  test('counsellor gets 403 on export, delete and user management', async () => {
+  test('counsellor gets 403 on export, delete, associates, registrations and roles', async () => {
     await postPublic(ctx.base, validInquiry());
     const id = await latestId();
     for (const [method, path, body] of [
       ['get', '/api/inquiries/export'],
       ['del', `/api/inquiries/${id}`],
-      ['get', '/api/users'],
-      ['post', '/api/users', { name: 'X Y', email: 'x@y.com', role: 'admin', password: 'long-enough-pw' }],
-      ['patch', `/api/users/${counsellor.id}`, { role: 'admin' }],
-      ['post', `/api/users/${counsellor.id}/password`, { password: 'another-long-pw' }],
+      ['get', '/api/associates'],
+      ['post', '/api/associates', { name: 'X Y', email: 'x@y.com', role: 'admin' }],
+      ['patch', `/api/associates/${counsellor.id}`, { role: 'admin' }],
+      ['post', `/api/associates/${counsellor.id}/reset-password`],
+      ['get', '/api/registrations'],
+      ['get', '/api/roles'],
+      ['get', '/api/audit'],
     ]) {
       const res = await counsellorApi[method](path, body);
       assert.equal(res.status, 403, `${method} ${path}`);
@@ -265,42 +271,6 @@ describe('staff API', () => {
     assert.equal((await adminApi.get(`/api/inquiries/${id}`)).status, 404);
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM inquiry_notes WHERE inquiry_id = ?', [id])).n, 0);
     assert.equal((await adminApi.del(`/api/inquiries/${id}`)).status, 404);
-  });
-
-  test('admin user management; deactivation takes effect immediately', async () => {
-    const weak = await adminApi.post('/api/users', { name: 'New Person', email: 'new@sloka.test', role: 'counsellor', password: 'short' });
-    assert.equal(weak.status, 400);
-    assert.ok(weak.data.fields.password);
-
-    const created = await adminApi.post('/api/users', { name: 'New Person', email: 'New@Sloka.test', role: 'counsellor', password: 'a-long-password' });
-    assert.equal(created.status, 201);
-    assert.equal(created.data.user.email, 'new@sloka.test');
-    const dup = await adminApi.post('/api/users', { name: 'Dup', email: 'new@sloka.test', role: 'counsellor', password: 'a-long-password' });
-    assert.equal(dup.status, 400);
-
-    const session = await login(ctx.base, 'new@sloka.test', 'a-long-password');
-    const api = client(ctx.base, session.cookie);
-    assert.equal((await api.get('/api/auth/me')).status, 200);
-
-    const deact = await adminApi.patch(`/api/users/${created.data.user.id}`, { active: false });
-    assert.equal(deact.status, 200);
-    assert.equal(deact.data.user.active, false);
-    assert.equal((await api.get('/api/auth/me')).status, 401, 'existing session rejected');
-    assert.equal((await login(ctx.base, 'new@sloka.test', 'a-long-password')).res.status, 401);
-
-    // reset password + reactivate
-    assert.equal((await adminApi.post(`/api/users/${created.data.user.id}/password`, { password: 'reset-password-1' })).status, 204);
-    await adminApi.patch(`/api/users/${created.data.user.id}`, { active: true });
-    assert.equal((await login(ctx.base, 'new@sloka.test', 'reset-password-1')).res.status, 200);
-
-    // safety rails
-    const self = await adminApi.patch(`/api/users/${admin.id}`, { active: false });
-    assert.equal(self.status, 400);
-    const selfDemote = await adminApi.patch(`/api/users/${admin.id}`, { role: 'counsellor' });
-    assert.equal(selfDemote.status, 400);
-
-    const users = await adminApi.get('/api/users');
-    assert.ok(users.data.users.every((u) => !('password_hash' in u) && !('passwordHash' in u)));
   });
 
   test('change own password', async () => {

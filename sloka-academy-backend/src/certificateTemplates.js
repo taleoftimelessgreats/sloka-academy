@@ -2,6 +2,7 @@
 
 const { PDFDocument } = require('pdf-lib');
 const { isWinAnsi } = require('./validation');
+const { extractPlaceholders, toMappings, validateMappings } = require('./placeholders');
 
 // Details that can be printed on an uploaded template, in editor order.
 const TEMPLATE_FIELDS = [
@@ -13,8 +14,23 @@ const TEMPLATE_FIELDS = [
   ['issueDate', 'Issue date'],
   ['certificateId', 'Certificate ID'],
   ['verifyUrl', 'Verification link'],
+  ['studentId', 'Student ID'],
 ];
 const FIELD_IDS = TEMPLATE_FIELDS.map(([id]) => id);
+
+// Other names a placeholder in an uploaded design may use for each detail (matched ignoring case and punctuation).
+const FIELD_ALIASES = {
+  name: ['name', 'studentname', 'fullname', 'participantname', 'participant', 'candidatename', 'recipientname', 'attendeename', 'nameoftheparticipant', 'nameofstudent'],
+  college: ['collegename', 'university', 'institution', 'institute', 'institutionname', 'school'],
+  sessionTitle: ['session', 'sessionname', 'event', 'eventname', 'webinar', 'webinartitle', 'topic', 'programme', 'program', 'title'],
+  sessionDate: ['date', 'eventdate', 'dateofsession', 'webinardate', 'heldon'],
+  venue: ['location', 'place', 'heldat'],
+  issueDate: ['dateofissue', 'issuedon', 'issued', 'certificatedate'],
+  certificateId: ['certid', 'certno', 'certificateno', 'certificatenumber', 'serialno', 'serialnumber', 'id'],
+  verifyUrl: ['verifylink', 'verificationlink', 'verificationurl', 'verifyat', 'link', 'url'],
+  studentId: ['studentcode', 'registrationno', 'registrationnumber', 'regno'],
+};
+const PLACEHOLDER_FIELDS = TEMPLATE_FIELDS.map(([id, label]) => ({ id, label, aliases: FIELD_ALIASES[id] || [] }));
 
 const FONTS = [
   ['helvetica', 'Helvetica'],
@@ -43,8 +59,26 @@ const DEFAULT_LAYOUT = Object.freeze({
     issueDate: f(false, 6, 89, 9, 'helvetica', '#3a3a44', 'left', 40, 'Issued: '),
     certificateId: f(true, 6, 93, 9, 'helvetica-bold', '#3a3a44', 'left', 44, 'Certificate ID: '),
     verifyUrl: f(true, 94, 93, 8, 'helvetica', '#3a3a44', 'right', 50, 'Verify at '),
+    studentId: f(false, 6, 85, 9, 'helvetica', '#3a3a44', 'left', 40, 'Student ID: '),
   },
+  placeholders: [],
 });
+
+/**
+ * The first layout of an uploaded design. A PDF whose text has placeholders gets them mapped to details
+ * (suggested from their names) and prints nothing else; otherwise the default positions.
+ */
+function initialLayout(info) {
+  if (!info.placeholders || !info.placeholders.length) return DEFAULT_LAYOUT;
+  const fields = Object.fromEntries(Object.entries(DEFAULT_LAYOUT.fields).map(([id, field]) => [id, { ...field, show: false }]));
+  return { fields, placeholders: toMappings(info.placeholders, PLACEHOLDER_FIELDS, info.pageWidth) };
+}
+
+/** Placeholders in a design's file, with suggested details (PDF only; [] for images). */
+async function detectPlaceholders(file, fileType, pageWidth) {
+  if (fileType !== 'pdf') return [];
+  return toMappings(await extractPlaceholders(file), PLACEHOLDER_FIELDS, pageWidth);
+}
 
 const num = (raw, min, max) => (typeof raw === 'number' && Number.isFinite(raw) && raw >= min && raw <= max ? Math.round(raw * 100) / 100 : null);
 
@@ -91,17 +125,22 @@ function validateLayout(input) {
     out.prefix = typeof prefix === 'string' ? prefix : '';
     fields[id] = out;
   }
-  if (!Object.keys(errors).length && !fields.name.show) errors['name.show'] = 'The student name must be printed.';
-  return { value: Object.keys(errors).length ? null : { fields }, errors };
+  const mapped = validateMappings(input.placeholders, FIELD_IDS, { pages: 1 });
+  Object.assign(errors, mapped.errors);
+  if (!Object.keys(errors).length && !fields.name.show && !mapped.value.some((m) => m.field === 'name')) {
+    errors['name.show'] = 'The student name must be printed: show it, or map a placeholder to it.';
+  }
+  return { value: Object.keys(errors).length ? null : { fields, placeholders: mapped.value }, errors };
 }
 
 class TemplateFileError extends Error {}
 
 /**
- * Check an uploaded template file and work out the certificate page size.
- * Returns { fileType, pageWidth, pageHeight }; throws TemplateFileError with a message for staff.
+ * Check an uploaded template file (certificate design or offer letter) and work out its page size.
+ * Returns { fileType, pageWidth, pageHeight, pageCount (PDF), placeholders (found in the first maxPages pages) };
+ * throws TemplateFileError with a message for staff.
  */
-async function inspectTemplateFile(buf) {
+async function inspectTemplateFile(buf, { maxPages = 1 } = {}) {
   if (!Buffer.isBuffer(buf) || buf.length < 8) throw new TemplateFileError('The file is empty.');
   const isPng = buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
   const isJpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
@@ -129,7 +168,10 @@ async function inspectTemplateFile(buf) {
     } catch {
       throw new TemplateFileError('This PDF could not be used as a background (the first page may be empty). Export the design again as a PDF.');
     }
-    return { fileType: 'pdf', pageWidth: width, pageHeight: height };
+    // Placeholders in the design's text ({{Student Name}} and the like). A PDF that cannot be read for text is still usable.
+    const placeholders = await extractPlaceholders(buf, { maxPages }).catch(() => []);
+    const pageCount = src.getPageCount();
+    return { fileType: 'pdf', pageWidth: width, pageHeight: height, pageCount, placeholders };
   }
   if (isPng || isJpeg) {
     const doc = await PDFDocument.create();
@@ -143,7 +185,7 @@ async function inspectTemplateFile(buf) {
     // Fit the long side of A4 (landscape or portrait, following the image).
     const landscape = img.width >= img.height;
     const pageWidth = landscape ? 841.89 : 595.28;
-    return { fileType: isPng ? 'png' : 'jpeg', pageWidth, pageHeight: Math.round(((pageWidth * img.height) / img.width) * 100) / 100 };
+    return { fileType: isPng ? 'png' : 'jpeg', pageWidth, pageHeight: Math.round(((pageWidth * img.height) / img.width) * 100) / 100, placeholders: [] };
   }
   throw new TemplateFileError('Upload a PDF, PNG or JPEG file.');
 }
@@ -275,6 +317,9 @@ function createTemplateRepo(db) {
 
 module.exports = {
   TEMPLATE_FIELDS,
+  PLACEHOLDER_FIELDS,
+  initialLayout,
+  detectPlaceholders,
   FONTS,
   ALIGNS,
   DEFAULT_LAYOUT,

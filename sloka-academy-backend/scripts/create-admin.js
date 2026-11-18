@@ -1,6 +1,6 @@
 'use strict';
 
-// Create an admin user.
+// Create a Super Admin (the first account, or a way back in). Every role and permission is managed in the portal.
 //   Interactive:      npm run create-admin
 //   Non-interactive:  ADMIN_NAME=... ADMIN_EMAIL=... ADMIN_PASSWORD=... npm run create-admin
 
@@ -9,7 +9,7 @@ const { loadDotEnv } = require('../src/env');
 const { parseDatabaseUrl } = require('../src/config');
 const { openDatabase } = require('../src/db');
 const { validateNewUser } = require('../src/validation');
-const { createUser } = require('../src/routes/users');
+const { createUser } = require('../src/routes/associates');
 
 function askHidden(prompt) {
   return new Promise((resolve) => {
@@ -70,7 +70,7 @@ async function main() {
   if (env.ADMIN_EMAIL && env.ADMIN_PASSWORD) {
     input = { name: env.ADMIN_NAME || 'Admin', email: env.ADMIN_EMAIL, password: env.ADMIN_PASSWORD };
   } else if (process.stdin.isTTY && typeof process.stdin.setRawMode === 'function') {
-    console.log('Create the first Sloka dashboard admin.');
+    console.log('Create a Sloka portal Super Admin.');
     input = await promptInteractive();
   } else {
     throw new Error(
@@ -78,7 +78,7 @@ async function main() {
     );
   }
 
-  const { values, errors } = validateNewUser({ ...input, role: 'admin' });
+  const { values, errors } = validateNewUser({ ...input, role: 'super_admin' });
   if (Object.keys(errors).length) {
     throw new Error(Object.entries(errors).map(([k, v]) => `${k}: ${v}`).join('\n'));
   }
@@ -87,10 +87,10 @@ async function main() {
   const db = await openDatabase(settings);
   try {
     if (await db.get('SELECT id FROM users WHERE email = ?', [values.email])) {
-      throw new Error(`A user with email ${values.email} already exists.`);
+      throw new Error(`An associate with email ${values.email} already exists.`);
     }
     const id = await createUser(db, values, 12);
-    console.log(`Admin "${values.name}" <${values.email}> created (id ${id}) in ${settings.host}/${settings.database}.`);
+    console.log(`Super Admin "${values.name}" <${values.email}> created (id ${id}) in ${settings.host}/${settings.database}.`);
   } finally {
     await db.close();
   }

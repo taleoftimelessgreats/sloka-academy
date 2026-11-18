@@ -67,26 +67,43 @@ const PROFILE_FIELDS = [
   ['yearOfStudy', 'Year of study'],
 ];
 
-const ROLES = [
-  ['counsellor', 'Counsellor'],
-  ['manager', 'Manager'],
-  ['admin', 'Admin'],
+// Roles and what they may do are in the database; see permissions.js.
+
+const DEPARTMENTS = [
+  ['bd-sales', 'BD / Sales'],
+  ['operations', 'Operations'],
+  ['accounts', 'Accounts'],
+  ['academics', 'Academics'],
+  ['marketing', 'Marketing'],
+  ['hr', 'HR'],
+  ['management', 'Management'],
+  ['other', 'Other'],
 ];
 
-// What each role may do beyond working enquiries and viewing students, sessions and certificates
-// (which every signed-in user can). Managers have every admin power except exporting student data,
-// editing or deleting records, and deactivating staff (users are never hard-deleted) or touching admins.
-const PERMISSIONS = {
-  manage: ['admin', 'manager'], // sessions, certificate designs, settings, staff accounts, revoking certificates
-  export: ['admin'], // CSV downloads, and choosing the Google Sheet that receives every registration
-  editRecords: ['admin'], // student profiles (incl. accepting changed details for one), a certificate's printed name and email
-  deleteRecords: ['admin'], // permanent erasure; deleting sessions and certificate designs
-  deactivateUsers: ['admin'],
-  manageAdmins: ['admin'], // create admin accounts, change or reset the password of an admin
-};
+const GENDERS = [
+  ['female', 'Female'],
+  ['male', 'Male'],
+  ['other', 'Other'],
+  ['undisclosed', 'Prefer not to say'],
+];
 
-const can = (role, permission) => Object.hasOwn(PERMISSIONS, permission) && PERMISSIONS[permission].includes(role);
-const permissionsFor = (role) => Object.keys(PERMISSIONS).filter((p) => can(role, p));
+const PAYMENT_MODES = [
+  ['upi', 'UPI'],
+  ['bank-transfer', 'Bank transfer (NEFT / IMPS / RTGS)'],
+  ['card', 'Card'],
+  ['payment-link', 'Payment link / gateway'],
+  ['cash', 'Cash'],
+  ['cheque', 'Cheque / DD'],
+  ['other', 'Other'],
+];
+
+// An enrollment's payment status follows its payments (registrationRepo.js). Overdue is a flag on top:
+// the balance due date has passed and a balance remains.
+const PAYMENT_STATUSES = [
+  ['slot-confirmed', 'Slot Confirmed'],
+  ['partially-paid', 'Partially Paid'],
+  ['fully-paid', 'Fully Paid'],
+];
 
 const PUBLIC_SOURCES = ['pre-register', 'contact', 'brochure'];
 const MANUAL_SOURCES = ['phone-call', 'walk-in'];
@@ -102,8 +119,11 @@ const LABELS = {
   plan: labelMap(PLANS),
   source: labelMap(SOURCES),
   status: labelMap(STATUSES),
-  role: labelMap(ROLES),
   program: labelMap(PROGRAMS),
+  department: labelMap(DEPARTMENTS),
+  gender: labelMap(GENDERS),
+  paymentMode: labelMap(PAYMENT_MODES),
+  paymentStatus: labelMap(PAYMENT_STATUSES),
   profileField: labelMap(PROFILE_FIELDS),
 };
 
@@ -115,27 +135,20 @@ function label(kind, id) {
 const toOptions = (pairs) => pairs.map(([id, text]) => ({ id, label: text }));
 
 module.exports = {
-  STREAMS,
-  YEARS,
-  PLANS,
-  SOURCES,
   STATUSES,
-  ROLES,
   PROGRAMS,
-  PROFILE_FIELDS,
-  PROGRAM_IDS: ids(PROGRAMS),
   STREAM_IDS: ids(STREAMS),
   YEAR_IDS: ids(YEARS),
   PLAN_IDS: ids(PLANS),
   SOURCE_IDS: ids(SOURCES),
   STATUS_IDS: ids(STATUSES),
-  ROLE_IDS: ids(ROLES),
+  DEPARTMENT_IDS: ids(DEPARTMENTS),
+  GENDER_IDS: ids(GENDERS),
+  PAYMENT_MODE_IDS: ids(PAYMENT_MODES),
+  PAYMENT_STATUS_IDS: ids(PAYMENT_STATUSES),
   PUBLIC_SOURCES,
   MANUAL_SOURCES,
   CLOSED_STATUSES,
-  PERMISSIONS,
-  can,
-  permissionsFor,
   LABELS,
   label,
   meta() {
@@ -146,7 +159,10 @@ module.exports = {
       sources: toOptions(SOURCES),
       manualSources: toOptions(SOURCES.filter(([id]) => MANUAL_SOURCES.includes(id))),
       statuses: toOptions(STATUSES),
-      roles: toOptions(ROLES),
+      departments: toOptions(DEPARTMENTS),
+      genders: toOptions(GENDERS),
+      paymentModes: toOptions(PAYMENT_MODES),
+      paymentStatuses: toOptions(PAYMENT_STATUSES),
       programs: toOptions(PROGRAMS),
       profileFields: toOptions(PROFILE_FIELDS),
       closedStatuses: CLOSED_STATUSES.slice(),

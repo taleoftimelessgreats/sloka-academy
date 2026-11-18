@@ -65,14 +65,10 @@ function tokenMatches(token, storedHashHex) {
 }
 
 module.exports = {
-  CODE_ALPHABET,
-  CROCKFORD,
   generateSessionCode,
   generateCertificateId,
   normalizeCertificateId,
-  normalizeCode,
   codesMatch,
   newDownloadToken,
   tokenMatches,
-  safeEqual,
 };

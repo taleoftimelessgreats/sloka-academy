@@ -8,7 +8,7 @@ Everything runs on one domain:
 | --- | --- |
 | `/` and the other pages | The website (this Next.js app) |
 | `/login/` | Login page: students to the LMS, staff to the admin portal |
-| `/admin/` | Staff admin portal (`public/admin`, a vanilla-JS app; noindex) |
+| `/admin/` | Staff admin portal (`public/admin`, vanilla JS in ES modules with no build step; noindex) |
 | `/api/...` | The Sloka Academy API (`../sloka-academy-backend`), run by the Vercel Function in `api/index.mjs` |
 
 The Pre-register, Contact and brochure forms send enquiries to that API (see [Enquiry forms](#enquiry-forms)).
@@ -26,6 +26,8 @@ npm start              # preview the built out/ folder
 ## Hosting (Vercel)
 
 `vercel.json` deploys the website, the admin portal and the API as one project: it builds the static site into `out/`, sends `/api/*` to the function in `api/index.mjs` (Tokyo region, next to the database), adds security headers to `/admin/`, and redirects paths without a trailing slash (`/domains/vlsi` → `/domains/vlsi/`). Project settings and environment variables are listed in `../sloka-academy-backend/README.md` → *Deploying on Vercel*; the key one here is `NEXT_PUBLIC_API_URL=/`.
+
+**The admin portal** (`public/admin`) loads `main.js` as an ES module: `core.js` holds the shared DOM helpers, API client, state and formatting; each area has its own module (`registrations.js`, `associates.js`, `roles.js`, `audit.js`, `students.js`, `enquiries.js`, `certificates.js` for sessions and certificates, `settings.js` for integrations, templates and the course master, `overview.js`, `account.js`), and `main.js` maps the routes to them with the permission each needs. Data is only ever rendered with DOM APIs (`h()` / `textContent`), never `innerHTML`.
 
 **Local development** runs two servers: the API (`npm run dev` in `../sloka-academy-backend`, port 4000) and this site (`npm run dev`, port 3000). The site forwards `/api` to the API, so http://localhost:3000/admin/ is the portal, as on the live site.
 

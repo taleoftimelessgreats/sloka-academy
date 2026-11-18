@@ -6,6 +6,7 @@ const { parseStudentFilters } = require('../studentRepo');
 const { validateStudentUpdate } = require('../validation');
 const { toCsv, nationalPhone } = require('../csv');
 const { localDate, localDateTime, validationError, HttpError } = require('../util');
+const { diff } = require('../audit');
 
 const hasErrors = (o) => Object.keys(o).length > 0;
 
@@ -14,9 +15,15 @@ function parseId(raw) {
   return Number(raw);
 }
 
-/** Staff: the master student database (career guidance + internship). Everyone reads; admins export/edit/erase. */
-function studentsRouter({ studentRepo, auth, verifications }) {
+const LABELS = {
+  name: 'Name', email: 'Email', phone: 'Mobile number', college: 'College', stream: 'Stream', yearOfStudy: 'Year of study', gender: 'Gender',
+  dateOfBirth: 'Date of birth', qualification: 'Qualification', specialization: 'Specialization', graduationYear: 'Year of graduation', city: 'City', state: 'State',
+};
+
+/** Staff: the master student database (career guidance + internship), permissions students.*. Edits are logged. */
+function studentsRouter({ studentRepo, auth, verifications, audit }) {
   const router = express.Router();
+  const may = (action) => auth.requirePermission(`students.${action}`);
 
   function filtersOrThrow(query) {
     const f = parseStudentFilters(query);
@@ -25,12 +32,12 @@ function studentsRouter({ studentRepo, auth, verifications }) {
   }
 
   // pendingVerifications: registrations and enquiries waiting to be matched to a profile (not in the list yet).
-  router.get('/', async (req, res) => {
+  router.get('/', may('view'), async (req, res) => {
     const [list, pendingVerifications] = await Promise.all([studentRepo.list(filtersOrThrow(req.query)), verifications.openCount()]);
     res.json({ ...list, pendingVerifications });
   });
 
-  router.get('/export', auth.requirePermission('export'), async (req, res) => {
+  router.get('/export', may('export'), async (req, res) => {
     const rows = await studentRepo.exportRows(filtersOrThrow(req.query));
     const header = [
       'Student ID', 'Name', 'Email', 'Phone', 'College', 'Stream', 'Year of study',
@@ -55,30 +62,36 @@ function studentsRouter({ studentRepo, auth, verifications }) {
     res.send(toCsv(header, data));
   });
 
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', may('view'), async (req, res) => {
     const id = parseId(req.params.id);
     const [d, pending] = await Promise.all([studentRepo.detail(id), verifications.list({ status: 'open', studentId: id })]);
     if (!d) throw new HttpError(404, { error: 'not_found' });
     res.json({ ...d, verifications: pending });
   });
 
-  router.patch('/:id', auth.requirePermission('editRecords'), async (req, res) => {
+  router.patch('/:id', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
     const { values, errors } = validateStudentUpdate(req.body);
     if (hasErrors(errors)) throw validationError(errors);
+    const before = await studentRepo.get(id);
     const result = await studentRepo.update(id, values);
     if (result === null) throw new HttpError(404, { error: 'not_found' });
     if (result === 'email_taken') throw validationError({ email: 'Another student record already uses this email.' });
     if (result === 'phone_taken') throw validationError({ phone: 'Another student record already uses this mobile number.' });
+    const changes = diff(before, values, LABELS);
+    if (changes.length) {
+      await audit.log({ actorId: req.user.id, entity: 'student', entityId: id, action: 'update', summary: `Edited the master record of ${result.name} (${result.studentCode})`, changes });
+    }
     const [d, pending] = await Promise.all([studentRepo.detail(id), verifications.list({ status: 'open', studentId: id })]);
     res.json({ ...d, verifications: pending });
   });
 
   // Permanent erasure on request: the student and every registration, certificate and enquiry linked to them.
-  router.delete('/:id', auth.requirePermission('deleteRecords'), async (req, res) => {
+  router.delete('/:id', may('delete'), async (req, res) => {
     const id = parseId(req.params.id);
-    if (!(await studentRepo.remove(id))) throw new HttpError(404, { error: 'not_found' });
-    console.log(`[audit] student #${id} and all linked records permanently deleted by user #${req.user.id}`);
+    const student = await studentRepo.get(id);
+    if (!student || !(await studentRepo.remove(id))) throw new HttpError(404, { error: 'not_found' });
+    await audit.log({ actorId: req.user.id, entity: 'student', entityId: id, action: 'delete', summary: `Permanently erased ${student.name} (${student.studentCode}) and every record linked to them` });
     res.status(204).end();
   });
 

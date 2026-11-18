@@ -2,6 +2,7 @@
 
 const C = require('./constants');
 const { isValidDateString } = require('./util');
+const { SCOPE_IDS: PERMISSION_SCOPES, isPermission } = require('./permissions');
 
 // Control characters, bidi overrides and line/paragraph separators are replaced in single-line fields.
 const SINGLE_LINE_JUNK = /[\u0000-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g;
@@ -96,7 +97,7 @@ const FIELDS = {
   assignedTo: { label: 'Assigned counsellor', check: userId },
   nextFollowUp: { label: 'Next follow-up', check: date },
   note: { label: 'Note', check: text({ min: 1, max: 4000, multiline: true }), requiredMsg: 'Note cannot be empty.' },
-  role: { label: 'Role', check: oneOf(C.ROLE_IDS, 'Role must be counsellor, manager or admin.'), requiredMsg: 'Role is required.' },
+  role: { label: 'Role', check: (raw) => (typeof raw === 'string' && /^[a-z][a-z0-9_]{1,39}$/.test(raw.trim()) ? { value: raw.trim() } : { error: 'Choose a role.' }), requiredMsg: 'Choose a role.' },
   password: { label: 'Password', check: password, requiredMsg: 'Password is required.' },
   active: { label: 'Active', check: (raw) => (typeof raw === 'boolean' ? { value: raw } : { error: 'Active must be true or false.' }) },
 };
@@ -195,6 +196,7 @@ function validateNote(input) {
   return run(asObject(input), { body: { required: true, def: FIELDS.note } });
 }
 
+// The first Super Admin (scripts/create-admin.js).
 function validateNewUser(input) {
   return run(asObject(input), {
     name: { required: true },
@@ -204,8 +206,36 @@ function validateNewUser(input) {
   });
 }
 
-function validateUserUpdate(input) {
-  return run(asObject(input), { name: { required: true }, role: { required: true }, active: { required: true } }, { partial: true });
+// ---- associates -------------------------------------------------------------------------------
+
+const ASSOCIATE_FIELDS = {
+  name: { label: 'Full name', check: text({ min: 2, max: 100 }), requiredMsg: 'Full name is required.' },
+  employeeId: {
+    label: 'Employee ID',
+    check: (raw) => {
+      const v = typeof raw === 'string' ? raw.trim().toUpperCase() : '';
+      return /^[A-Z0-9][A-Z0-9._/-]{0,39}$/.test(v) ? { value: v } : { error: 'Employee ID: up to 40 letters, digits and . _ / -' };
+    },
+    requiredMsg: 'Employee ID is required.',
+  },
+  email: { label: 'Official email', check: email, requiredMsg: 'Official email is required.' },
+  mobile: { label: 'Mobile', check: phone, requiredMsg: 'Mobile number is required.' },
+  department: { label: 'Department', check: oneOf(C.DEPARTMENT_IDS, 'Choose a department.'), requiredMsg: 'Choose a department.' },
+  designation: { label: 'Designation', check: text({ min: 2, max: 100 }), requiredMsg: 'Designation is required.' },
+  role: FIELDS.role,
+  reportingManagerId: { label: 'Reporting manager', check: userId },
+  dateOfJoining: { label: 'Date of joining', check: date, requiredMsg: 'Date of joining is required.' },
+  active: FIELDS.active,
+};
+
+/** Add Associate (create) or edit one (partial: only the fields sent). */
+function validateAssociate(input, { partial = false } = {}) {
+  const spec = Object.fromEntries(
+    Object.entries(ASSOCIATE_FIELDS)
+      .filter(([k]) => partial || k !== 'active')
+      .map(([k, def]) => [k, { def, required: k !== 'reportingManagerId' }]),
+  );
+  return run(asObject(input), spec, { partial });
 }
 
 function validatePassword(input, key = 'password') {
@@ -375,10 +405,6 @@ function validateSession(input, { partial = false } = {}) {
   return run(body, spec, { partial });
 }
 
-function validateCertName(input) {
-  return run(asObject(input), { name: { required: true, def: CERT_FIELDS.name } });
-}
-
 /** Staff correction of a registration: the printed name and/or the email the certificate goes to. */
 function validateCertCorrection(input) {
   const body = asObject(input);
@@ -389,8 +415,146 @@ function validateCertCorrection(input) {
   return { values, errors };
 }
 
+// ---- student master & internship registrations --------------------------------------------------
+
+/** Rupees as a number or text ("14,999", "14999.50", "₹14999") -> paise. More than ₹0, at most ₹1 crore. */
+function rupees(raw, label) {
+  let s = null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) s = String(raw);
+  else if (typeof raw === 'string') s = raw.replace(/[,\s\u20B9]/g, '').replace(/^Rs\.?/i, '');
+  if (s === null || !/^\d{1,8}(\.\d{1,2})?$/.test(s)) return { error: `${label}: enter an amount in rupees, e.g. 14999 or 14999.50.` };
+  const paise = Math.round(Number(s) * 100);
+  if (paise <= 0) return { error: `${label} must be more than ₹0.` };
+  if (paise > 1e9) return { error: `${label} must be at most ₹1,00,00,000.` };
+  return { value: paise };
+}
+
+const recordId = (labelText) => ({
+  label: labelText,
+  check: (raw) => {
+    const n = typeof raw === 'string' && /^\d+$/.test(raw.trim()) ? Number(raw.trim()) : raw;
+    return Number.isSafeInteger(n) && n > 0 ? { value: n } : { error: `Choose a ${labelText.toLowerCase()}.` };
+  },
+  requiredMsg: `Choose a ${labelText.toLowerCase()}.`,
+});
+
+// Printed on the offer letter, so in the PDF fonts' character set.
+const STUDENT_FIELDS = {
+  name: { label: 'Full name', check: printable({ min: 2, max: 100 }), requiredMsg: 'Full name is required.' },
+  phone: { label: 'Mobile number', check: phone, requiredMsg: 'Mobile number is required.' },
+  email: { label: 'Email', check: email, requiredMsg: 'Email is required.' },
+  gender: { label: 'Gender', check: oneOf(C.GENDER_IDS, 'Choose a gender.') },
+  dateOfBirth: {
+    label: 'Date of birth',
+    check: (raw) => {
+      const r = date(raw);
+      if (r.error) return r;
+      const age = (Date.now() - Date.parse(`${r.value}T00:00:00Z`)) / (365.25 * 24 * 3600 * 1000);
+      return age >= 14 && age <= 80 ? r : { error: 'Check the date of birth.' };
+    },
+  },
+  college: { label: 'College / university', check: printable({ min: 2, max: 150 }), requiredMsg: 'College / university is required.' },
+  qualification: { label: 'Qualification', check: text({ max: 100 }) },
+  specialization: { label: 'Specialization', check: text({ max: 150 }) },
+  stream: FIELDS.stream,
+  yearOfStudy: FIELDS.yearOfStudy,
+  graduationYear: {
+    label: 'Year of graduation',
+    check: (raw) => {
+      const n = typeof raw === 'string' && /^\d{4}$/.test(raw.trim()) ? Number(raw.trim()) : raw;
+      const max = new Date().getFullYear() + 6;
+      return Number.isInteger(n) && n >= 1980 && n <= max ? { value: n } : { error: `Year of graduation must be between 1980 and ${max}.` };
+    },
+  },
+  city: { label: 'City', check: text({ max: 100 }) },
+  state: { label: 'State', check: text({ max: 100 }) },
+};
+
+/** Staff edit of a student's master record (partial). */
 function validateStudentUpdate(input) {
-  return run(asObject(input), { name: { required: true }, email: {}, phone: {}, college: {}, stream: {}, yearOfStudy: {} }, { partial: true });
+  const spec = Object.fromEntries(
+    Object.entries(STUDENT_FIELDS).map(([k, def]) => [
+      k,
+      // Records from the website forms may lack an email or a printable college; editing one does not force them.
+      { def: k === 'name' ? FIELDS.name : k === 'college' ? FIELDS.college : def, required: k === 'name' },
+    ]),
+  );
+  return run(asObject(input), spec, { partial: true });
+}
+
+/** The student part of the registration form (a new student master record). */
+function validateRegistrationStudent(input) {
+  const required = ['name', 'phone', 'email', 'college'];
+  return run(asObject(input), Object.fromEntries(Object.entries(STUDENT_FIELDS).map(([k, def]) => [k, { def, required: required.includes(k) }])));
+}
+
+const ENROLLMENT_FIELDS = {
+  courseId: recordId('Course domain'),
+  batchStartDate: { label: 'Batch / internship start date', check: date, requiredMsg: 'Batch / internship start date is required.' },
+  fee: { label: 'Committed program fee', check: rupees, requiredMsg: 'Committed program fee is required.' },
+  tokenAmount: { label: 'Registration (token) amount', check: rupees, requiredMsg: 'Registration (token) amount is required.' },
+  paymentMode: { label: 'Payment mode', check: oneOf(C.PAYMENT_MODE_IDS, 'Choose a payment mode.'), requiredMsg: 'Choose a payment mode.' },
+  transactionReference: { label: 'Transaction reference', check: text({ max: 100 }) },
+  paidOn: { label: 'Paid on', check: date },
+  balanceDueDate: { label: 'Balance due date', check: date },
+  bdAssociateId: { label: 'BD Associate', check: userId },
+  remarks: { label: 'Remarks', check: text({ max: 2000, multiline: true }) },
+};
+
+/** New registration (create) or a change to one (partial: course, batch, fee, due date, BD Associate, remarks). */
+function validateEnrollment(input, { partial = false } = {}) {
+  const keys = partial ? ['courseId', 'batchStartDate', 'fee', 'balanceDueDate', 'bdAssociateId', 'remarks'] : Object.keys(ENROLLMENT_FIELDS);
+  const required = partial ? ['courseId', 'batchStartDate', 'fee'] : ['courseId', 'batchStartDate', 'fee', 'tokenAmount', 'paymentMode'];
+  return run(asObject(input), Object.fromEntries(keys.map((k) => [k, { def: ENROLLMENT_FIELDS[k], required: required.includes(k) }])), { partial });
+}
+
+/** A later payment against an enrollment (create), or a correction of a payment (partial). */
+function validatePayment(input, { partial = false } = {}) {
+  return run(
+    asObject(input),
+    {
+      amount: { def: { ...ENROLLMENT_FIELDS.tokenAmount, label: 'Amount', requiredMsg: 'Amount is required.' }, required: true },
+      paymentMode: { def: ENROLLMENT_FIELDS.paymentMode, required: true },
+      transactionReference: { def: ENROLLMENT_FIELDS.transactionReference },
+      paidOn: { def: ENROLLMENT_FIELDS.paidOn },
+      ...(partial ? {} : { balanceDueDate: { def: ENROLLMENT_FIELDS.balanceDueDate } }),
+    },
+    { partial },
+  );
+}
+
+function validateCourse(input, { partial = false } = {}) {
+  return run(
+    asObject(input),
+    {
+      name: { def: { label: 'Course domain', check: printable({ min: 2, max: 150 }), requiredMsg: 'Name the course domain.' }, required: true },
+      duration: { def: { label: 'Internship duration', check: printable({ min: 2, max: 60 }), requiredMsg: 'Internship duration is required, e.g. 2 months.' }, required: true },
+      active: { def: FIELDS.active },
+      offerTemplateId: { def: recordId('Offer letter template') },
+    },
+    { partial },
+  );
+}
+
+// ---- roles ------------------------------------------------------------------------------------
+
+function validateRole(input, { partial = false } = {}) {
+  const body = asObject(input);
+  const { values, errors } = run(
+    body,
+    {
+      name: { def: { label: 'Role name', check: text({ min: 2, max: 60 }), requiredMsg: 'Name the role.' }, required: true },
+      description: { def: { label: 'Description', check: text({ max: 500 }) } },
+      scope: { def: { label: 'Data scope', check: oneOf(PERMISSION_SCOPES, 'Choose own, team or all records.'), requiredMsg: 'Choose a data scope.' }, required: true },
+    },
+    { partial },
+  );
+  if (!partial || body.permissions !== undefined) {
+    if (!Array.isArray(body.permissions) || body.permissions.length > 200 || !body.permissions.every((p) => typeof p === 'string' && isPermission(p))) {
+      errors.permissions = 'Invalid permissions.';
+    } else values.permissions = [...new Set(body.permissions)];
+  }
+  return { values, errors };
 }
 
 function validateTemplateName(raw) {
@@ -403,22 +567,25 @@ function validateRevoke(input) {
 
 module.exports = {
   normalizePhone,
+  validateAssociate,
+  validateRegistrationStudent,
+  validateEnrollment,
+  validatePayment,
+  validateCourse,
+  validateRole,
   validatePublicInquiry,
   validateManualInquiry,
   validateInquiryUpdate,
   validateNote,
   validateNewUser,
-  validateUserUpdate,
   validatePassword,
   validateCertificateRegistration,
   validateSession,
-  validateCertName,
   validateCertCorrection,
   validateStudentUpdate,
   validateTemplateName,
   validateRevoke,
   isWinAnsi,
-  CERT_NAME_MSG,
   SESSION_CLOSED_MSG,
   WRONG_CODE_MSG,
   FIELDS,

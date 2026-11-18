@@ -38,4 +38,4 @@ async function assignMissingStudentIds(db, prefix) {
   return missing.length;
 }
 
-module.exports = { formatStudentId, nextStudentCode, assignMissingStudentIds };
+module.exports = { nextStudentCode, assignMissingStudentIds };

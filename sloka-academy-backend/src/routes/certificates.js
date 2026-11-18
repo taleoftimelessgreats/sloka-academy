@@ -49,10 +49,10 @@ function certificatesCsv(res, rows, filename) {
   res.send(toCsv(header, data));
 }
 
-/** Staff: certificate registrations. Everyone views/searches/downloads/resends; managers and admins manage. */
-function certificatesRouter({ config, certRepo, delivery, auth, verifications }) {
+/** Staff: certificate registrations (permissions certificates.*; viewing includes downloading and re-sending). */
+function certificatesRouter({ config, certRepo, delivery, auth, verifications, audit }) {
   const router = express.Router();
-  const manage = auth.requirePermission('manage');
+  const may = (action) => auth.requirePermission(`certificates.${action}`);
   const canEmail = () => delivery.enabled();
 
   async function load(id) {
@@ -76,16 +76,16 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications })
     return f;
   }
 
-  router.get('/', async (req, res) => {
+  router.get('/', may('view'), async (req, res) => {
     res.json(await certRepo.listRegs(filtersOrThrow(req.query)));
   });
 
-  router.get('/export', auth.requirePermission('export'), async (req, res) => {
+  router.get('/export', may('export'), async (req, res) => {
     certificatesCsv(res, await certRepo.exportRegs(filtersOrThrow(req.query)), `sloka-certificates-${localDate()}.csv`);
   });
 
   // Try again for every valid certificate whose email failed. Runs in the background.
-  router.post('/retry-emails', manage, async (req, res) => {
+  router.post('/retry-emails', may('edit'), async (req, res) => {
     if (!canEmail()) return res.status(400).json({ error: 'email_not_configured', message: 'Email is not configured on the server.' });
     const ids = (await certRepo.exportRegs(filtersOrThrow({ emailStatus: 'failed', status: 'issued' }))).map((r) => r.id);
     (async () => {
@@ -94,12 +94,12 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications })
     return res.status(202).json({ queued: ids.length });
   });
 
-  router.get('/:id', async (req, res) => {
+  router.get('/:id', may('view'), async (req, res) => {
     res.json(await detail(parseId(req.params.id)));
   });
 
   // Staff copy of the PDF (does not count as a student download). Revoked ones are watermarked.
-  router.get('/:id/pdf', async (req, res) => {
+  router.get('/:id/pdf', may('view'), async (req, res) => {
     const id = parseId(req.params.id);
     const r = await load(id);
     const pdf = await delivery.render(await certRepo.getRegRow(id));
@@ -109,7 +109,7 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications })
   });
 
   // Email the certificate PDF again, with a fresh download link (the old link stops working).
-  router.post('/:id/resend', async (req, res) => {
+  router.post('/:id/resend', may('view'), async (req, res) => {
     const id = parseId(req.params.id);
     const r = await load(id);
     if (!canEmail()) return res.status(400).json({ error: 'email_not_configured', message: 'Email is not configured on the server.' });
@@ -119,7 +119,7 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications })
   });
 
   // Correct the printed name and/or the email address the certificate is sent to.
-  router.patch('/:id', auth.requirePermission('editRecords'), async (req, res) => {
+  router.patch('/:id', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
     await load(id);
     const { values, errors } = validateCertCorrection(req.body);
@@ -129,7 +129,7 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications })
     res.json(await detail(id));
   });
 
-  router.post('/:id/revoke', manage, async (req, res) => {
+  router.post('/:id/revoke', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
     await load(id);
     const { values, errors } = validateRevoke(req.body);
@@ -138,7 +138,7 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications })
     res.json(await detail(id));
   });
 
-  router.post('/:id/reinstate', manage, async (req, res) => {
+  router.post('/:id/reinstate', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
     await load(id);
     await certRepo.reinstate(id, req.user.id);
@@ -146,10 +146,11 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications })
   });
 
   // Permanent erasure on request: registration + its activity log.
-  router.delete('/:id', auth.requirePermission('deleteRecords'), async (req, res) => {
+  router.delete('/:id', may('delete'), async (req, res) => {
     const id = parseId(req.params.id);
-    if (!(await certRepo.deleteReg(id))) throw new HttpError(404, { error: 'not_found' });
-    console.log(`[audit] certificate registration #${id} permanently deleted by user #${req.user.id}`);
+    const reg = await certRepo.getReg(id);
+    if (!reg || !(await certRepo.deleteReg(id))) throw new HttpError(404, { error: 'not_found' });
+    await audit.log({ actorId: req.user.id, entity: 'certificate', entityId: id, action: 'delete', summary: `Permanently deleted certificate ${reg.certificateId} (${reg.name})` });
     res.status(204).end();
   });
 

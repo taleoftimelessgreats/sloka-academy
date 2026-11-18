@@ -1,17 +1,19 @@
 # Sloka Academy — API
 
-The API behind the Sloka Academy website and its staff admin portal. It does four jobs:
+The API behind the Sloka Academy website and its staff admin portal. It does these jobs:
 
 1. **Career Guidance Certificate form**: students who attended a career guidance session fill in the form on the website (`/certificate/`) with the session code. The certificate of participation is issued immediately: they download it on the spot, it is **emailed to them as a PDF**, and the registration is **copied to a Google Sheet**. Anyone can verify a certificate by its ID.
 2. **Master student database**: every career guidance registration and every Internship Course Program enquiry is linked to one student record with its own **Student ID** (e.g. `SLK-STU-2026-00042`). Students are matched by email or mobile number, so a returning student is never added twice and staff see each student's full history.
 3. **Internship enquiries**: `POST /api/public/inquiries` receives the Pre-register (Internship Course Program), Contact and Brochure-download forms. This process is separate from the certificate form; the two only share the student records.
-4. **Admin portal**: a small vanilla-JS app that is part of the website (`sloka-academy-frontend/public/admin`, served at `/admin/`, sign in at `/admin/#/login`); this server provides its API. Staff work with students, sessions, certificates and enquiries; managers and admins also run sessions, certificate designs (uploaded templates), settings and users. See [Roles](#roles).
+4. **Internship registrations** by the BD team: each registration is checked against the student master (mobile number and email), records the committed fee and the token amount, and keeps a **payment ledger** with the balance, the due date and the payment status (Slot Confirmed → Partially Paid → Fully Paid, with an Overdue flag). See [Internship registrations](#internship-registrations).
+5. **Offer letters**: an Internship Offer Letter (PDF, ID `SLK/OL/2026/0001`) for every registration whose slot is confirmed, on the built-in letterhead or an uploaded template, downloaded or emailed to the student. See [Offer letters](#offer-letters).
+6. **Admin portal**: a small vanilla-JS app (ES modules, no build step) that is part of the website (`sloka-academy-frontend/public/admin`, served at `/admin/`, sign in at `/admin/#/login`); this server provides its API. Who may do what is set per role on the **Roles & permissions** screen and enforced by the API. See [Roles & permissions](#roles--permissions) and [Associates](#associates).
 
 This server serves **API routes only** (`/api/...`); anything else is a JSON 404. Staff reach the portal from the website's Sign in page (`/login/`). Every response carries `X-Robots-Tag: noindex, nofollow`, and the website's `robots.txt` disallows `/admin/` and `/api/`.
 
 On Vercel the website, the portal and this API run as **one project on one domain**: see [Deploying on Vercel](#deploying-on-vercel).
 
-Stack: Node ≥ 22.13 (developed on 24), Express 5, a MySQL-compatible database (TiDB Cloud) through `mysql2`, `bcryptjs`, `jsonwebtoken`, `nodemailer`, `pdf-lib`. There is no build step.
+Stack: Node ≥ 22.13 (developed on 24), Express 5, a MySQL-compatible database (TiDB Cloud) through `mysql2`, `bcryptjs`, `jsonwebtoken`, `nodemailer`, `pdf-lib` (PDFs) and `pdfjs-dist` (reading placeholders in uploaded PDFs; its optional `@napi-rs/canvas` renders a page to pick cover colours). There is no build step.
 
 ## Setup
 
@@ -38,18 +40,13 @@ The data lives in a MySQL-compatible database, set by `DATABASE_URL`: `mysql://U
 - **Transactions.** A transaction is retried automatically after a deadlock or write conflict.
 - **Latency.** Every query is a round trip to the database, so host the server in or near the database's region (AWS `ap-northeast-1`). From India each round trip is about 125 ms.
 
-**Moving data over from the former SQLite database.** `npm run import-sqlite` copies `DB_PATH` (default `./data/sloka.db`) into `DATABASE_URL`. To read another file, pass it after `--`, e.g. `npm run import-sqlite -- path/to/file.db`.
-- Ids, Student IDs, certificate IDs, download links, passwords and signed-in sessions stay the same, and rows already copied to the Google Sheet are not sent again.
-- The SQLite file is only read.
-- The script refuses a target database that already has data. `--replace` deletes that data first, which is useful to copy again just before switching over.
-
-**Creating the first admin.** `npm run create-admin` prompts for the details. Git Bash/mintty has no interactive TTY, so there you either run it from PowerShell/cmd or pass the values as environment variables:
+**Creating the first Super Admin.** `npm run create-admin` prompts for the details. Git Bash/mintty has no interactive TTY, so there you either run it from PowerShell/cmd or pass the values as environment variables:
 
 ```bash
 ADMIN_NAME="Anita" ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD='a-long-password' npm run create-admin
 ```
 
-Admins create everyone else under **Users** in the dashboard (managers can add counsellors and managers too).
+Everyone else is added under **Associates** in the portal, and receives an invite (see [Associates](#associates)). Migration 4 made the portal's original admins Super Admins.
 
 ## Environment variables
 
@@ -57,12 +54,11 @@ Admins create everyone else under **Users** in the dashboard (managers can add c
 |---|---|---|
 | `PORT` | `4000` | HTTP port |
 | `DATABASE_URL` | none, **required** | `mysql://USER:PASSWORD@HOST:PORT/DATABASE`. See [Database](#database). |
-| `DB_PATH` | `./data/sloka.db` | The former SQLite file. Only `npm run import-sqlite` reads it. |
 | `TEST_DATABASE_URL` | the server in `DATABASE_URL` | Database server for `npm test`. See [Tests](#tests). |
 | `JWT_SECRET` | none, **required** | ≥ 32 chars. The server refuses to start without it. |
 | `ALLOWED_ORIGINS` | `http://localhost:3000` | Comma-separated **other** origins allowed to call the public endpoints (exact match). Pages on the API's own domain are always allowed. |
 | `TRUST_PROXY` | off (`1` on Vercel) | Set behind a reverse proxy: `1` (number of hops), `loopback`, or proxy IPs. Needed for correct client IPs in rate limiting. |
-| `DASHBOARD_URL` | `http://localhost:3000/admin/` | Public URL of the staff portal (part of the website). Used for links in team notifications. Production: `https://www.slokaacademy.com/admin/`. |
+| `DASHBOARD_URL` | `http://localhost:3000/admin/` | Public URL of the staff portal (part of the website). Used for links in team notifications and associate invites. Production: `https://www.slokaacademy.com/admin/`. |
 | `PUBLIC_API_URL` | origin of `DASHBOARD_URL` | Base URL that serves this API, used in emailed certificate download links: the website, which forwards `/api`. Only set it if students should see a different hostname. |
 | `NODE_ENV` | | `production` turns on `Secure`/`__Host-` cookies and HSTS |
 | `TZ` | system | Set to `Asia/Kolkata` so "today", "overdue" and certificate dates follow Indian dates |
@@ -134,43 +130,150 @@ An email that fails to send does not count. The limit is `emailDailyLimit` in `s
 
 CORS applies only to the `/api/public/*` routes (this one and the certificate routes below). It reflects allow-listed origins, allows `GET, POST, OPTIONS` and the `Content-Type` header, and never allows credentials. All rate limits are constants in `src/config.js`.
 
-## Roles
+## Roles & permissions
 
-| Role | Can |
-|---|---|
-| **Counsellor** | Work enquiries (add, update, assign, note), view students, sessions and certificates, download and re-send a certificate |
-| **Manager** | Everything a counsellor can, plus everything an admin can **except**: export or download student data (CSV exports, and changing the Google Sheet link, since a new sheet receives every registration), edit or delete records (student profiles, certificate corrections, permanent erasure, deleting sessions and designs), and deleting users (deactivating staff accounts). Managers cannot create, change or reset the password of an admin account. |
-| **Admin** | Everything |
+Every API route checks one permission, `<module>.<action>` (`src/permissions.js`): the modules are internship registrations, payments, offer letters, offer letter templates, the course master, the student master, enquiries, sessions, certificates, certificate designs, settings, associates, roles & permissions and the audit log; the actions are View, Create, Edit, Delete and Export (where they mean something). Hiding a button in the portal is never the protection: the API refuses (403) whatever the role does not allow.
 
-The rules live in `PERMISSIONS` in `src/constants.js`. `GET /api/auth/me` and the login response include the user's `permissions`, which the portal uses to show or hide controls. In the tables below, **manager** means managers and admins.
+Roles are rows in the database, edited by Super Admins on the **Roles & permissions** screen (a grid of every permission against every role). They start as:
+
+| Module / action | Super Admin | Admin | BD Manager | BD Associate | Accounts |
+|---|---|---|---|---|---|
+| Register students | ✓ | ✓ | ✓ (team) | ✓ (own) | — |
+| View registered students | All | All | Team | Own | All |
+| Edit fee/payment after submission | ✓ | ✓ | — | — | ✓ |
+| Record later payments | ✓ | ✓ | — | — | ✓ |
+| Export student data | ✓ | ✓ | Team | — | ✓ |
+| Manage associates | ✓ | ✓ (not Super Admins) | — | — | — |
+| Manage offer letter templates | ✓ | ✓ | — | — | — |
+| Generate/send offer letters | ✓ | ✓ | Team | Own | — |
+| Roles & permissions | ✓ | — | — | — | — |
+
+Admin also has every other module (students, enquiries, sessions, certificates, designs, settings, audit log). BD Managers and BD Associates also work enquiries. The portal's two original roles are kept as roles too: **Manager** (sessions, certificate designs, revoking certificates, settings, associates below them, enquiries) and **Counsellor** (enquiries; views students, sessions and certificates).
+
+- **Data scope** (per role): *own* records, *team* records (theirs and everyone who reports to them, directly or not, through **Reporting manager**) or *all*. It applies to internship registrations, their payments, offer letters and the registration export; a registration outside the scope is "not found".
+- **Super Admin** always has every permission and sees everything; it cannot be restricted. At least one active Super Admin must remain.
+- **Custom roles** can be created (optionally starting from another role's permissions), renamed and deleted when no associate has them. The five roles of the requirements cannot be deleted.
+- **Per-associate overrides**: a Super Admin can grant or revoke single permissions for one associate on top of their role.
+- **No escalation**: an associate can give someone a role, or manage an associate, only if every permission of it is one they hold themselves. Only Super Admins manage Super Admins.
+- Changes to roles and overrides apply to signed-in associates at once (permissions are read on every request). Changing an associate's role signs them out.
+
+`GET /api/auth/me` and the login response include `role`, `roleName`, `permissions`, `scope` and `mustChangePassword`.
+
+## Associates
+
+Associates are the people who can sign in to the portal (formerly "users"). **Add Associate** takes full name, employee ID, official email, mobile, department (BD/Sales, Operations, Accounts, …), designation, role, reporting manager (optional) and date of joining.
+
+- On save the login is created with a random **temporary password** and an invite is emailed to the official email with the portal link. If email is not configured or fails, the portal shows the temporary password once to the person who added them.
+- At first sign-in (and after **Reset password**, which works the same way) every API call except `/api/auth/*` answers `403 password_change_required` until they choose their own password.
+- **Deactivating** revokes access at once (they are signed out everywhere and cannot sign in) and keeps everything: registrations stay tagged to them. Associates are never deleted. Only active associates can sign in.
+- Email and employee ID are unique. A reporting manager is an active associate and never someone who reports to this associate (no loops).
+
+## Audit log
+
+`audit_log` records who changed what, when, and the old → new values: role and permission changes, per-associate overrides, associates (added, edited, deactivated, password reset), fees, due dates, BD reassignments and payments, student master edits and creations, verification decisions, certificate design and offer letter template uploads and changes, course master changes, the offer letter signatory, the Google Sheet connection, and every permanent deletion. Entries are written in the same transaction as the change. The portal shows it under **Audit log** (permission `audit.view`), filterable by what changed, who and when.
 
 ## Staff API (same-origin, cookie session)
 
-The session is an httpOnly, `SameSite=Strict` cookie holding an 8-hour JWT. The user is re-loaded from the database on every request, so deactivating a user, changing their role or resetting their password takes effect immediately. Failed logins are limited to 5 per email+IP and 30 per IP every 15 minutes. State-changing requests from another site are refused with 403, based on `Sec-Fetch-Site` and `Origin`.
+The session is an httpOnly, `SameSite=Strict` cookie holding an 8-hour JWT. The associate is re-loaded from the database on every request, with their role's permissions and overrides, so deactivating them, changing their role or permissions, or resetting their password takes effect immediately. Failed logins are limited to 5 per email+IP and 30 per IP every 15 minutes. State-changing requests from another site are refused with 403, based on `Sec-Fetch-Site` and `Origin`.
 
-| Method & path | Who | Notes |
+"Needs" is the permission the route checks (see [Roles & permissions](#roles--permissions)); *signed in* means any associate.
+
+| Method & path | Needs | Notes |
 |---|---|---|
-| `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` · `POST /api/auth/password` | staff | Login body: `{email, password}`. Password change: `{currentPassword, newPassword}`. |
-| `GET /api/meta` · `GET /api/staff` | staff | Labels/enums, and staff for assignee pickers |
-| `GET /api/stats` | staff | Overview: `students`, `pendingVerifications`, `certificates` (see below), `sessions` (latest 6), `recentRegistrations`, `system` (email on/off, Google Sheet state, default design), plus the enquiry pipeline: `newCount`, `dueToday`, `overdue`, `byStatus`, `byStream`, `byPlan` |
-| `GET /api/students` | staff | Master student list. Filters: `q` (name/email/phone/college/Student ID), `program` (`career-guidance`\|`internship`), `stream`, `yearOfStudy` (`none` = not specified), `sessionId`, `sort` (`recent`\|`name`\|`created`), `page`, `pageSize` ≤ 100 |
-| `GET /api/students/:id` | staff | `{student, certificates, enquiries, verifications}`. `student.programs` holds the programme tags; `verifications` are records waiting to be verified against this profile. The list also returns `programs` per student and `pendingVerifications` (records waiting anywhere). |
-| `GET /api/verifications?status=open\|closed\|all` · `GET /api/verifications/:id` | staff | Records waiting for profile verification: the profile, the submitted details and the fields that differ. Enquiry and certificate details include their open `verification`. |
-| `POST /api/verifications/:id/resolve` | manager | `{action}`: `link` (keep the profile as it is), `new_profile` (a different person), or `update` (accept the submitted details, **admin** only) |
-| `PATCH /api/students/:id` | admin | Profile: `name`, `email`, `phone`, `college`, `stream`, `yearOfStudy`. The email and mobile number must not belong to another student. |
-| `DELETE /api/students/:id` | admin | Permanent erasure of the student and **all** their registrations, certificates and enquiries |
-| `GET /api/students/export` | admin | CSV with the list filters |
-| `GET /api/inquiries` | staff | Filters: `status`, `source`, `stream`, `plan`, `yearOfStudy` (`none` = not specified), `assignedTo` (`id`\|`me`\|`none`), `followUp` (`today`\|`overdue`\|`due`), `q`, `sort` (`createdAt`\|`updatedAt`\|`nextFollowUp`\|`name`\|`status`), `dir`, `page`, `pageSize` ≤ 100 |
-| `POST /api/inquiries` | staff | Manual `phone-call` / `walk-in` enquiry. `consent: true` confirms the enquirer agreed. |
-| `GET /api/inquiries/:id` · `PATCH /api/inquiries/:id` | staff | PATCH accepts status, assignedTo, nextFollowUp (`YYYY-MM-DD`/null) and the contact/interest fields. Each change is appended to the timeline. |
-| `POST /api/inquiries/:id/notes` | staff | `{body}`. Notes are append-only. |
-| `GET /api/inquiries/export` | admin | CSV with the same filters as the list. See below. |
-| `DELETE /api/inquiries/:id` | admin | Permanent erasure of the enquiry and its notes |
-| `GET/POST /api/users` · `PATCH /api/users/:id` · `POST /api/users/:id/password` | manager | Users are deactivated, never deleted; only admins deactivate. Only admins can create admins or change/reset an admin account. Nobody can change their own role or deactivate themselves, or remove the last admin. |
+| `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` · `POST /api/auth/password` | signed in | Login body: `{email, password}`. Password change: `{currentPassword, newPassword}` (also ends the temporary-password state). |
+| `GET /api/meta` · `GET /api/staff` | signed in | Labels/enums (including roles and whether email works), and associates for pickers |
+| `GET /api/stats` | signed in | The overview, each part only with its permission: enquiry pipeline (`enquiries.view`), `students` and `pendingVerifications` (`students.view`), `certificates` and `recentRegistrations` (`certificates.view`), `sessions` (`sessions.view`), `registrations` totals in scope (`registrations.view`), `openRegistrationFlags` (`students.edit`), `system` (`settings.view`) |
+| `GET /api/students` | `students.view` | Master student list. Filters: `q` (name/email/phone/college/Student ID), `program` (`career-guidance`\|`internship`), `stream`, `yearOfStudy` (`none` = not specified), `sessionId`, `sort` (`recent`\|`name`\|`created`), `page`, `pageSize` ≤ 100 |
+| `GET /api/students/:id` | `students.view` | `{student, certificates, enquiries, verifications}`. `student.programs` holds the programme tags; `student.registrations` counts internship registrations. |
+| `GET /api/verifications?status=open\|closed\|all` · `GET /api/verifications/:id` | `students.view` | Records waiting for profile verification |
+| `POST /api/verifications/:id/resolve` | `students.create` / `students.edit` | `{action}`: `link` or `new_profile` (`students.create`), `update` (accept the submitted details: `students.edit`). Logged. |
+| `PATCH /api/students/:id` | `students.edit` | Master details: `name`, `email`, `phone`, `college`, `gender`, `dateOfBirth`, `qualification`, `specialization`, `stream`, `yearOfStudy`, `graduationYear`, `city`, `state`. The email and mobile number must not belong to another student. Every change is logged old → new. |
+| `DELETE /api/students/:id` | `students.delete` | Permanent erasure of the student and **all** their registrations, certificates, internship registrations (with payments and offer letters) and enquiries |
+| `GET /api/students/export` | `students.export` | CSV with the list filters |
+| `GET /api/inquiries` | `enquiries.view` | Filters: `status`, `source`, `stream`, `plan`, `yearOfStudy` (`none` = not specified), `assignedTo` (`id`\|`me`\|`none`), `followUp` (`today`\|`overdue`\|`due`), `q`, `sort` (`createdAt`\|`updatedAt`\|`nextFollowUp`\|`name`\|`status`), `dir`, `page`, `pageSize` ≤ 100 |
+| `POST /api/inquiries` | `enquiries.create` | Manual `phone-call` / `walk-in` enquiry. `consent: true` confirms the enquirer agreed. |
+| `GET /api/inquiries/:id` · `PATCH /api/inquiries/:id` | `enquiries.view` · `enquiries.edit` | PATCH accepts status, assignedTo, nextFollowUp (`YYYY-MM-DD`/null) and the contact/interest fields. Each change is appended to the timeline. |
+| `POST /api/inquiries/:id/notes` | `enquiries.edit` | `{body}`. Notes are append-only. |
+| `GET /api/inquiries/export` | `enquiries.export` | CSV with the same filters as the list. See below. |
+| `DELETE /api/inquiries/:id` | `enquiries.delete` | Permanent erasure of the enquiry and its notes (logged) |
+| `GET /api/associates` · `GET /api/associates/:id` | `associates.view` | Associates with role, department, reporting manager, status and last sign-in; the detail includes the permission overrides for those with `roles.view` |
+| `POST /api/associates` | `associates.create` | Add Associate (fields above). Returns `invite: {emailed, error?, tempPassword?}` (the password only when it could not be emailed). |
+| `PATCH /api/associates/:id` | `associates.edit` (`active`: `associates.delete`) | Any of the fields, or `{active}`. Nobody changes their own role or deactivates themselves; one active Super Admin remains. |
+| `POST /api/associates/:id/reset-password` | `associates.edit` | New temporary password, emailed (or returned as above); signs them out |
+| `PUT /api/associates/:id/permissions` | `roles.edit` | `{overrides: {"module.action": true\|false}}` (true grants, false revokes; absent = from the role) |
+| `GET /api/roles` | `roles.view` | The modules, actions and scopes, and every role with its permissions, scope and number of associates |
+| `POST /api/roles` · `PATCH /api/roles/:key` · `DELETE /api/roles/:key` | `roles.edit` | `{name, description?, scope, permissions}`. Super Admin's permissions cannot change; built-in roles and roles in use cannot be deleted. |
+| `GET /api/audit` | `audit.view` | Filters: `entity`, `entityId`, `actorId`, `from`, `to` (dates), `page` (50 a page). Also returns the `entities` with their labels. |
 
-All CSV exports (enquiries and certificates) are built for Excel: UTF-8 with a BOM, CRLF line endings and human-readable labels. Any cell starting with `= + - @`, a tab or a CR is prefixed with `'` to block formula injection. Phones are exported as the 10-digit national number (`9492631715`), so Excel shows them as-is.
+All CSV exports are built for Excel: UTF-8 with a BOM, CRLF line endings and human-readable labels. Any cell starting with `= + - @`, a tab or a CR is prefixed with `'` to block formula injection. Phones are exported as the 10-digit national number (`9492631715`), so Excel shows them as-is.
 
 "Due today" and "overdue" use the server's local date and exclude enquiries that are `enrolled` or `not-interested`. Conversion counts use each enquiry's current status.
+
+## Internship registrations
+
+The BD team registers students for the Internship Course Program under **Registrations** (`POST /api/registrations`). The form has two parts:
+
+- **Student details** (saved to the student master): full name, mobile number, email, gender, date of birth, college/university, qualification, specialization, year of study, year of graduation, city and state. Mobile number, email, name and college are required.
+- **Enrollment** (one per registration; a student can have several, e.g. different course domains): course domain (from the course master), batch / internship start date, the **committed program fee** (negotiated per student), the **registration (token) amount** with payment mode, transaction reference and date, the balance due date, the BD Associate (the person registering; those with `registrations.edit` can register for someone else) and remarks.
+
+**Duplicate check.** As the mobile number and email are typed, the portal asks `GET /api/registrations/lookup` for master records with them. A match shows a dialog (name, masked mobile, email, college, earlier enrollments): **"Is this the same student?"**
+- **Yes:** the student's details are filled in from the master record and locked; the new enrollment is linked to their Student ID (`studentId` in the request). The master record is not changed (blank email or mobile fields are filled).
+- **No:** registration is blocked; the associate must re-verify the number and email with the student, and the conflict is flagged for an admin (`POST /api/registrations/flags`, reviewed under **Registrations → conflicts** by those with `students.edit`).
+- The server checks again on submit: a known mobile number or email without a confirmed `studentId` gets `409 student_exists` with the matches.
+
+**Rules.** The token amount is more than ₹0 and at most the committed fee. While a balance remains a balance due date is required, on or after the registration date. A later payment cannot be more than the balance or dated in the future. The fee cannot be lowered below what has been paid. Amounts are stored in paise.
+
+**Status.** *Slot Confirmed* once the token is paid, *Partially Paid* after a later instalment, *Fully Paid* when nothing remains; **Overdue** is a flag on top while a balance remains after the due date. The registration date is recorded by the system.
+
+**Registered students.** The list is searchable (name, mobile, email, Student ID) and filters by course domain, BD Associate, payment status, registration date range and due date range, with **Due this week** and **Overdue** views and a CSV export (`registrations.export`). The student profile page shows the master details, every enrollment in scope and each enrollment's payment ledger, where later payments are recorded (`payments.create`) and fees, dates, payments and the BD Associate corrected (`registrations.edit`, logged old → new).
+
+The **course master** (Settings → Course master) holds the course domains with the internship duration printed on offer letters and, optionally, each domain's offer letter template. It starts with the website's domains.
+
+| Method & path | Needs | Notes |
+|---|---|---|
+| `GET /api/registrations` | `registrations.view` | Filters: `q`, `courseId`, `bdAssociateId`, `status` (`slot-confirmed`\|`partially-paid`\|`fully-paid`\|`overdue`), `view` (`due-week`\|`overdue`), `regFrom`, `regTo`, `dueFrom`, `dueTo`, `sort` (`recent`\|`due`\|`name`\|`balance`), `page`, `pageSize`. Within the data scope. |
+| `GET /api/registrations/export` | `registrations.export` | CSV with the list filters, within the scope |
+| `GET /api/registrations/lookup?phone=&email=` | `registrations.create` | Master records with that mobile number or email (masked mobile, email, college, enrollments, the other master details) |
+| `POST /api/registrations` | `registrations.create` | `{studentId?, student: {...}, enrollment: {...}, sendOfferLetter?}`. Errors are keyed `student.<field>` / `enrollment.<field>`. Generates the offer letter; `sendOfferLetter` also emails it when email works. |
+| `GET /api/registrations/students/:studentId` | `registrations.view` | Student profile: master details and the enrollments in scope with payments and offer letter |
+| `GET /api/registrations/:id` · `PATCH /api/registrations/:id` · `DELETE /api/registrations/:id` | `registrations.view` · `.edit` · `.delete` | PATCH: `courseId`, `batchStartDate`, `fee`, `balanceDueDate`, `bdAssociateId`, `remarks`. DELETE removes its payments and offer letter. Logged. |
+| `POST /api/registrations/:id/payments` | `payments.create` | `{amount, paymentMode, transactionReference?, paidOn?, balanceDueDate?}` |
+| `PATCH /api/registrations/:id/payments/:paymentId` · `DELETE …` | `registrations.edit` | Correct a payment, or remove a later one (the token payment stays). Logged. |
+| `GET /api/registrations/flags?status=` · `POST /api/registrations/flags/:id/resolve` | `students.edit` | Conflicts associates flagged |
+| `POST /api/registrations/flags` | `registrations.create` | `{name, phone, email, note?}` |
+| `GET /api/courses` · `POST /api/courses` · `PATCH /api/courses/:id` | `courses.view` (or registering) · `.create` · `.edit` | `{name, duration, active, offerTemplateId}` |
+
+## Offer letters
+
+When a registration's slot is confirmed (the token is recorded), its **Internship Offer Letter** is generated: an offer of an **unpaid internship** in the course domain, with a **Certificate of Internship** on completing and submitting the assigned project. Offer letter IDs are `SLK/OL/<year>/<number>`, counted per year and never reused.
+
+- A letter keeps a snapshot of what it says (the values, the text and the layout); its PDF is rendered from it on demand, on the same engine as the certificates (`src/offerLetterPdf.js`). **Regenerate** refreshes it with the current details, template and signatory, keeping its ID; the date becomes today.
+- Delivery: download as PDF, or email it to the student (PDF attached). The status (*Generated*, *Sent*, *Failed* with the reason) and every event are recorded with timestamps.
+- Placeholders: `{{student_name}}`, `{{student_id}}`, `{{course_domain}}`, `{{college_name}}`, `{{internship_start_date}}`, `{{internship_duration}}`, `{{offer_date}}`, `{{offer_letter_id}}`, `{{signatory_name}}`, `{{signatory_designation}}`. `**text**` prints in bold; a blank line starts a paragraph.
+- **Templates** (Settings → Offer letter templates): the built-in Sloka letterhead with the default text, a text-only template on the letterhead, or an uploaded PDF, PNG or JPEG (as certificate designs). On an uploaded letterhead the text is printed within margins set as percentages of the page. An uploaded PDF that **is** the letter (its own text with placeholders) needs no text of ours: its placeholders are filled in (all its pages are used). New templates are inactive until previewed with sample data and activated. One template is the default; a course domain can have its own. Templates used by letters or course domains cannot be deleted.
+- The signatory is set once in Settings (defaults to `CERT_SIGNATORY_NAME` / `CERT_SIGNATORY_TITLE`).
+
+| Method & path | Needs | Notes |
+|---|---|---|
+| `GET /api/registrations/:id/offer-letter` · `GET …/offer-letter/pdf` | `offerLetters.view` | The letter with its log; the PDF (`?inline=1` to view) |
+| `POST /api/registrations/:id/offer-letter/generate` · `POST …/send` | `offerLetters.create` | (Re)generate; email it to the student |
+| `GET /api/offer-templates` | `offerTemplates.view` | Templates, the built-in text and layout, the placeholder fields, the signatory |
+| `POST /api/offer-templates?name=…` · `POST /api/offer-templates/text` | `offerTemplates.create` | Upload a file (raw body, as certificate designs); or `{name, body?}` for text on the letterhead |
+| `PATCH /api/offer-templates/:id` | `offerTemplates.edit` | `{name?, body?, layout?, active?}` |
+| `PUT /api/offer-templates/default` · `PUT /api/offer-templates/signatory` | `offerTemplates.edit` | `{id}` (null = built-in); `{name, designation}` |
+| `POST /api/offer-templates/preview` | `offerTemplates.view` | `{templateId?, body?, layout?}` → sample letter stamped PREVIEW |
+| `POST /api/offer-templates/:id/placeholders` · `GET …/file` · `DELETE …/:id` | `offerTemplates.edit` · `.view` · `.delete` | Find placeholders again; the original file; delete an unused template |
+
+## Placeholders in uploaded templates
+
+A PDF uploaded as a certificate design or an offer letter template may already contain placeholders: text such as `{{Student Name}}`, `<<Certificate ID>>`, `«College»`, `[[Date]]`, `[Session Title]` or `{Course}`. On upload the server reads the PDF's text layer with pdf.js (`src/placeholders.js`), finds each placeholder, where it is and its size and font (bold and italic too), and suggests the system field it means from its name (`Participant Name` → student name, `cert_no` → certificate ID, `Date of Joining` → internship start date, and so on). The template editor lists them so staff can change each mapping, its font, size, colour and alignment, or leave a placeholder as it is.
+
+When a document is made, each mapped placeholder is covered and its value printed in its place:
+- a placeholder on a line of its own is replaced where it is and may grow (a long name stays whole, shrinking only to fit the page);
+- a placeholder inside a sentence has its **whole line set again** with the values in place, so `for attending [Session Title] on <<Date>>` reflows instead of a long title running into the words after it;
+- the cover is a box in the colour around the placeholder, sampled from a rendering of the page when the template is scanned (white when the page cannot be rendered).
+
+Limits: images (PNG/JPEG) have no text layer, so nothing is found in them (place the details with the layout editor instead), nor in PDFs whose text was turned into outlines. The placeholder's original text stays in the PDF underneath the cover: it is invisible, but can show when the PDF's text is copied.
 
 ## Master student database
 
@@ -183,7 +286,7 @@ Each email and each mobile number belongs to at most one profile, which unique i
 - **Different details** (e.g. another name or college, or a new email with a known number): the profile is **not** changed and the record is not linked yet. It is saved as **pending verification**:
   - A 6-digit code is emailed to the address **already on the profile**, and the website form asks for it. With the right code the profile takes the submitted details and the record is linked.
   - Codes expire after 10 minutes. After 5 wrong codes, or when no code could be sent, the record stays pending for staff. A code can't be sent when the profile has no email, email is off, or the address reached its daily limit.
-  - Staff see waiting records under **Students → Profile verification** and on the record itself, side by side with the profile. A manager or admin decides: link it and keep the profile as it is; link it and take the submitted details (admins only, since it edits a profile); or, for a different person, give it a profile and Student ID of its own. An email or number that belongs to the existing profile stays with it.
+  - Staff see waiting records under **Students → Profile verification** and on the record itself, side by side with the profile. Staff with `students.create` decide: link it and keep the profile as it is, or, for a different person, give it a profile and Student ID of its own; linking it and taking the submitted details edits a profile, so it needs `students.edit`. Decisions are logged. An email or number that belongs to the existing profile stays with it.
 - **The email belongs to one profile and the number to another:** the record waits for verification against the email's profile.
 
 A few other cases:
@@ -197,7 +300,7 @@ A few other cases:
 
 ## Career guidance certificates
 
-Staff create a **session** (title, date, venue, in-person/online, optional closing time, optional certificate design). Each session gets a 6-character code from an alphabet without look-alikes (no 0/O/1/I/L), or managers and admins set their own (6–20 letters/digits). The code is announced at the end of the session. A student who enters the correct code on the website gets their certificate **immediately**; there is no approval step.
+Staff create a **session** (title, date, venue, in-person/online, optional closing time, optional certificate design). Each session gets a 6-character code from an alphabet without look-alikes (no 0/O/1/I/L), or staff who run sessions set their own (6–20 letters/digits). The code is announced at the end of the session. A student who enters the correct code on the website gets their certificate **immediately**; there is no approval step.
 
 Each session has two student links (shown on the session's page in the portal): `/certificate/?session=<id>` opens the form with the session selected, and `/certificate/?session=<id>&code=<code>` also fills in the code. Anyone who has the second link can get a certificate, so share it (or a QR code of it) only at the end of the session.
 
@@ -205,7 +308,7 @@ The website form works in two steps. First it sends the registration with `previ
 
 After a successful registration the server, in the background:
 
-1. generates the PDF and **emails it as an attachment** (with a personal download link and the verify link) when SMTP is configured. Each registration records the email status: `sent`, `failed` (with the mail server's reason), `pending` or `off` (email not configured). Failed emails show on the Overview; staff can correct the address and send again, and managers and admins can resend all failed ones at once;
+1. generates the PDF and **emails it as an attachment** (with a personal download link and the verify link) when SMTP is configured. Each registration records the email status: `sent`, `failed` (with the mail server's reason), `pending` or `off` (email not configured). Failed emails show on the Overview; staff can correct the address and send again, and those with `certificates.edit` can resend all failed ones at once;
 2. **appends a row to the Google Sheet** connected in Settings (see below).
 
 ### Refer a friend
@@ -222,7 +325,7 @@ The PDF is generated on demand from the database, so a name correction takes eff
 
 ### Certificate designs (templates)
 
-Managers and admins upload certificate artwork in **Settings → Certificate designs**: a PDF (its first page is used), PNG or JPEG of up to 4 MB, designed **without** the student's details. In the layout editor they choose where each detail is printed (student name, college, session title, session date, venue, issue date, certificate ID, verification link) by position (% across and down the page), size, standard PDF font, colour, alignment, maximum width (long text shrinks to fit) and optional text before it, with a live PDF preview.
+Certificate artwork is uploaded in **Settings → Certificate designs** (`certTemplates.*`): a PDF (its first page is used), PNG or JPEG of up to 4 MB. A PDF with placeholders has them found and mapped (see [Placeholders in uploaded templates](#placeholders-in-uploaded-templates)). Otherwise, in the layout editor staff choose where each detail is printed (student name, college, session title, session date, venue, issue date, certificate ID, verification link, Student ID) by position (% across and down the page), size, standard PDF font, colour, alignment, maximum width (long text shrinks to fit) and optional text before it, with a live PDF preview.
 
 - One design is the **default** for new certificates; until one is chosen, the built-in Sloka design is used. A session can pick a different design.
 - Each certificate **keeps the design it was issued with**, even if the default changes later. Editing a design's layout changes how its issued certificates look when downloaded again (the portal warns about this).
@@ -279,32 +382,33 @@ The team is **not** notified about certificate registrations.
 
 ### Staff API
 
-| Method & path | Who | Notes |
+| Method & path | Needs | Notes |
 |---|---|---|
-| `GET /api/sessions` · `GET /api/sessions/:id` | staff | Includes the code, the registration count, `templateId`, `studentLink` and `studentLinkWithCode` (the form link with `&code=`, which fills in the code) |
-| `POST /api/sessions` · `PATCH /api/sessions/:id` | manager | `{title, sessionDate, venue, mode, description, code, registrationOpen, closesAt, templateId}`. Title and venue must be printable in the PDF fonts. `templateId: null` = the default design. |
-| `POST /api/sessions/:id/regenerate-code` | manager | |
-| `DELETE /api/sessions/:id` | admin | `409 has_registrations` if any student registered. Close registration instead. |
-| `GET /api/sessions/:id/export` | admin | CSV of that session's registrations |
-| `GET /api/certificates` | staff | `q` (name/email/phone/college/certificate ID), `sessionId`, `studentId`, `status` (`issued`\|`revoked`), `emailStatus` (`sent`\|`failed`\|`pending`\|`off`), `page`, `pageSize` |
-| `GET /api/certificates/:id` · `GET /api/certificates/:id/pdf` | staff | Detail with the activity log. The staff PDF copy is not counted as a download, and is watermarked if revoked. |
-| `POST /api/certificates/:id/resend` | staff | Emails the PDF again with a new download link (the old link stops working). Waits for the mail server and returns `result: "sent"\|"failed"`. Needs SMTP. |
-| `POST /api/certificates/retry-emails` | manager | `202 {queued}`: resends every valid certificate whose email failed, in the background |
-| `PATCH /api/certificates/:id` | admin | `{name?, email?}`. Corrections are logged old → new. |
-| `POST /api/certificates/:id/revoke` · `POST /api/certificates/:id/reinstate` | manager | Revoking requires `{reason}`. |
-| `DELETE /api/certificates/:id` | admin | Permanent erasure of the registration and its activity log |
-| `GET /api/certificates/export` | admin | CSV of all certificates, with the list filters |
-| `GET /api/templates` | staff | Designs (without files), field/font lists, `builtInIsDefault` |
-| `POST /api/templates?name=…` | manager | Upload: the raw file as the body with `Content-Type: application/pdf`, `image/png` or `image/jpeg`. `400 fields.file` explains rejected files; `413` over 4 MB (Vercel refuses request bodies over 4.5 MB). |
-| `GET /api/templates/:id` · `GET /api/templates/:id/file` | manager | Detail with layout; the original file |
-| `PATCH /api/templates/:id` | manager | `{name?, layout?, archived?}`. Layout errors come back per field, e.g. `fields["name.x"]`. |
-| `PUT /api/templates/default` | manager | `{id}`, or `{id: null}` for the built-in design |
-| `POST /api/templates/preview` | manager | `{templateId?, layout?}` → sample certificate PDF (unsaved layouts allowed) |
-| `DELETE /api/templates/:id` | admin | `409 in_use` if certificates or sessions use it (archive instead) |
-| `GET /api/settings` | manager | Google Sheet status (web app URL, sheet name and link, rows waiting, last sync/error) and email status |
-| `GET /api/settings/google-sheet/script` | admin | `{script}`: the Apps Script to paste into the sheet (contains the shared secret) |
-| `PUT /api/settings/google-sheet` | admin | `{url}`: the web app URL ending in `/exec` (empty disconnects). Returns `check: {ok, title}` or `{ok: false, message}`. |
-| `POST /api/settings/google-sheet/test` · `POST /api/settings/google-sheet/sync` | manager | Check access; copy waiting rows now |
+| `GET /api/sessions` · `GET /api/sessions/:id` | `sessions.view` | Includes the code, the registration count, `templateId`, `studentLink` and `studentLinkWithCode` (the form link with `&code=`, which fills in the code) |
+| `POST /api/sessions` · `PATCH /api/sessions/:id` | `sessions.create` · `sessions.edit` | `{title, sessionDate, venue, mode, description, code, registrationOpen, closesAt, templateId}`. Title and venue must be printable in the PDF fonts. `templateId: null` = the default design. |
+| `POST /api/sessions/:id/regenerate-code` | `sessions.edit` | |
+| `DELETE /api/sessions/:id` | `sessions.delete` | `409 has_registrations` if any student registered. Close registration instead. |
+| `GET /api/sessions/:id/export` | `sessions.export` | CSV of that session's registrations |
+| `GET /api/certificates` | `certificates.view` | `q` (name/email/phone/college/certificate ID), `sessionId`, `studentId`, `status` (`issued`\|`revoked`), `emailStatus` (`sent`\|`failed`\|`pending`\|`off`), `page`, `pageSize` |
+| `GET /api/certificates/:id` · `GET /api/certificates/:id/pdf` | `certificates.view` | Detail with the activity log. The staff PDF copy is not counted as a download, and is watermarked if revoked. |
+| `POST /api/certificates/:id/resend` | `certificates.view` | Emails the PDF again with a new download link (the old link stops working). Returns `result: "sent"\|"failed"`. Needs SMTP. |
+| `POST /api/certificates/retry-emails` | `certificates.edit` | `202 {queued}`: resends every valid certificate whose email failed, in the background |
+| `PATCH /api/certificates/:id` | `certificates.edit` | `{name?, email?}`. Corrections are logged old → new. |
+| `POST /api/certificates/:id/revoke` · `POST /api/certificates/:id/reinstate` | `certificates.edit` | Revoking requires `{reason}`. |
+| `DELETE /api/certificates/:id` | `certificates.delete` | Permanent erasure of the registration and its activity log (logged) |
+| `GET /api/certificates/export` | `certificates.export` | CSV of all certificates, with the list filters |
+| `GET /api/templates` | `certTemplates.view` (or creating/editing sessions) | Designs (without files), field/font lists, the placeholder fields, `builtInIsDefault` |
+| `POST /api/templates?name=…` | `certTemplates.create` | Upload: the raw file as the body with `Content-Type: application/pdf`, `image/png` or `image/jpeg`. Returns `placeholdersFound`. `400 fields.file` explains rejected files; `413` over 4 MB (Vercel refuses request bodies over 4.5 MB). |
+| `GET /api/templates/:id` · `GET /api/templates/:id/file` | `certTemplates.view` | Detail with layout; the original file |
+| `POST /api/templates/:id/placeholders` | `certTemplates.edit` | Find the placeholders in the file again, with suggested fields (nothing is saved) |
+| `PATCH /api/templates/:id` | `certTemplates.edit` | `{name?, layout?, archived?}`. `layout.placeholders` holds the mappings. Errors come back per field, e.g. `fields["name.x"]`, `fields["placeholders.0.field"]`. |
+| `PUT /api/templates/default` | `certTemplates.edit` | `{id}`, or `{id: null}` for the built-in design |
+| `POST /api/templates/preview` | `certTemplates.view` | `{templateId?, layout?}` → sample certificate PDF (unsaved layouts allowed) |
+| `DELETE /api/templates/:id` | `certTemplates.delete` | `409 in_use` if certificates or sessions use it (archive instead) |
+| `GET /api/settings` | `settings.view` | Google Sheet status (web app URL, sheet name and link, rows waiting, last sync/error) and email status |
+| `GET /api/settings/google-sheet/script` | `settings.edit` | `{script}`: the Apps Script to paste into the sheet (contains the shared secret) |
+| `PUT /api/settings/google-sheet` | `settings.edit` | `{url}`: the web app URL ending in `/exec` (empty disconnects). Returns `check: {ok, title}` or `{ok: false, message}`. |
+| `POST /api/settings/google-sheet/test` · `POST /api/settings/google-sheet/sync` | `settings.view` | Check access; copy waiting rows now |
 
 `GET /api/stats` returns `certificates`: `openSessions`, `registrationsThisWeek` (since Monday, server time), `issuedTotal` (all-time, including revoked), `revoked`, `emailed`, `emailFailed`, `emailPending` and `recent` activity.
 
@@ -326,12 +430,16 @@ TEST_DATABASE_URL='mysql://root:@127.0.0.1:4000/sloka?ssl=false' npm test
 
 - Enquiries: submission, every validation rule, the honeypot, CORS, rate limits, 401/403 rules, login, updates and notes, stats, CSV escaping, deletion, deactivation and CSRF.
 - Certificates: session listing, wrong and right codes, duplicates, name rules, honeypot, verification, PDF tokens, revoke and reinstate, name and email correction, the failed-code limiter, role checks, session deletion, CSV export, the emailed PDF, failed emails and resending.
-- Students: matching across sessions and enquiries (by email and by phone), Student IDs, programme tags, filters, profile edits, CSV export, erasure, the database's own rules (roles, one profile per email and per number), and the SQLite import.
+- Students: matching across sessions and enquiries (by email and by phone), Student IDs, programme tags, filters, profile edits, CSV export, erasure, and the database's own rules (the seeded roles and course master, one profile per email and per number).
 - Profile verification and email: same details link without changes, different details wait (wrong, expired and resent codes, locking after 5 wrong codes), staff decisions and who may make them, staff edits, erasure of a profile others were waiting on, and the daily email limit (5 per address of any kind, failed sends not counted, daily reset, team notifications included).
 - Designs: layout validation, uploads (PDF, PNG, junk, empty pages, tiny images, oversized files), previews, the default and per-session designs, issued certificates keeping their design, archive/delete rules.
 - Google Sheets: web app URL parsing, and syncing through the real Apps Script source run against a fake spreadsheet (tabs and headers, back-fill, new rows, referred friends, plain-text values, no duplicates on resend), the wrong-secret, private-deployment and missing-URL errors and retry, and who may see the script.
 - Refer a friend: required friends and fields, referral enquiries linked to the registration without profiles or certificates, no duplicates on a repeat registration, the CSV column, and erasure.
 - Certificate previews: the PREVIEW PDF before issuing stores nothing and is checked like a registration; the issued certificate's view (also when revoked) and not found.
+- Roles & permissions: the default matrix, custom roles applying at once at the API, data scope, Super Admin locked, built-in and in-use roles kept, the audit log's access and filters. The original Manager role keeps its powers and cannot escalate.
+- Associates: Add Associate with the emailed invite, the forced password change, unique email and employee ID, reporting-manager loops, deactivation, reset password (emailed or shown once), Super Admin protection, per-associate overrides, all logged.
+- Internship registrations: validation (mobile and email, token, due date), the duplicate check (lookup, 409 on an unconfirmed match, confirming an existing student, flagging a conflict), payments and the status flow, overpaying, corrections and their audit entries, own/team/all scope (lists, profiles, PDFs and exports), Due This Week and Overdue, filters and search, the offer letter (download, regenerate with the same ID, email sent and failed), CSV export and deletion, erasure.
+- Templates and placeholders: field suggestions, placeholders found in a certificate design (alone and inside sentences, cover colour, fonts) and printed on issued certificates, images, offer letter templates (text-only, uploaded complete letters, preview, activation rules), which template a letter uses (course, default, built-in) and the signatory.
 
 ## Deploying on Vercel
 
@@ -352,7 +460,7 @@ The website project (`sloka-academy-frontend`) deploys everything under one doma
    - `NODE_ENV` = `production`, `TZ` = `Asia/Kolkata`
    - `DASHBOARD_URL` = `https://www.slokaacademy.com/admin/`
    - Not needed: `ALLOWED_ORIGINS` (same domain), `TRUST_PROXY` (defaults to 1 on Vercel), `PUBLIC_API_URL`
-3. Create the first admin from your computer against the same database (`npm run create-admin`), then sign in at `/admin/`.
+3. Create the first Super Admin from your computer against the same database (`npm run create-admin`), then sign in at `/admin/` and add everyone else under **Associates**.
 
 How it behaves on Vercel:
 
@@ -360,7 +468,8 @@ How it behaves on Vercel:
 - Emails, enquiry notifications and Sheets syncs that continue after a response are kept alive with `waitUntil`.
 - The rate limits are kept in memory per running instance, so under load they are looser than on a single server.
 - Google Sheets: there is no background timer between requests, so rows sync when a registration arrives or when staff press **Sync now** in Settings.
-- Certificate-design uploads are limited to 4 MB.
+- Certificate-design and offer-template uploads are limited to 4 MB.
+- Rendering a template page to pick its cover colours uses `@napi-rs/canvas` (an optional dependency of `pdfjs-dist` with prebuilt binaries). Where it is missing, covers default to white and can be set in the editor.
 
 ## Deployment notes (any host)
 
@@ -374,9 +483,9 @@ How it behaves on Vercel:
 
 - Public forms require explicit consent; the consent timestamp is stored. Staff confirm consent for phone and walk-in entries.
 - Only the fields listed above are stored. IP addresses and user agents are **not** stored. IPs are held in memory only, for up to 15 minutes, for rate limiting.
-- Access is limited to logged-in staff, and admin-only actions are enforced on the server.
-- Admins can permanently delete an enquiry and its notes, a certificate registration and its activity log, or a whole student with everything linked to them, on request. Remember that the database's backups (TiDB Cloud keeps them for its retention period), the former SQLite file, and rows already copied to the Google Sheet still contain the data.
-- Registrations and referred friends are copied to Google Sheets and certificates are sent through your email provider; both are third-party processors. Keep the sheet's sharing Restricted to staff who need it (the Apps Script does not need link sharing), and keep the script's secret private.
+- Access is limited to signed-in, active associates, and every permission (and the data scope) is enforced on the server. Changes are recorded in the audit log.
+- Associates with the delete permissions can permanently delete an enquiry and its notes, a certificate registration and its activity log, an internship registration with its payments and offer letter, or a whole student with everything linked to them, on request. Remember that the database's backups (TiDB Cloud keeps them for its retention period), the former SQLite file, and rows already copied to the Google Sheet still contain the data.
+- Registrations and referred friends are copied to Google Sheets, and certificates, offer letters and associate invites are sent through your email provider; both are third-party processors. Keep the sheet's sharing Restricted to staff who need it (the Apps Script does not need link sharing), and keep the script's secret private.
 - Referred friends did not give their details themselves. The form asks the student to confirm each friend agreed; admissions should say who referred them when they call and delete the details of anyone who doesn't want to be contacted.
 - The public verification endpoint reveals only the name, session, issue date and status of a certificate. It never reveals email, phone or college.
 - Requirements under India's **Digital Personal Data Protection Act, 2023** (notice wording, retention periods, grievance contact, breach reporting and so on) should be confirmed with a legal adviser. This software does not by itself make you compliant.

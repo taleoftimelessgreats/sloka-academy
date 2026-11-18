@@ -167,6 +167,52 @@ function createNotifier(config, { logger = console, quota = null, transport = nu
       ].join('\n');
       await send({ from: config.notifyFrom, to: v.to, subject: 'Your Sloka Academy verification code', text });
     },
+
+    /**
+     * An associate's sign-in details: a new account (kind 'invite') or a password reset ('reset').
+     * a: { to, name, password, roleName, loginUrl, kind }. They must choose their own password when they sign in.
+     */
+    async sendAssociateInvite(a) {
+      if (!smtpReady) throw new Error('Email is not configured on the server.');
+      const text = [
+        `Hi ${a.name},`,
+        '',
+        a.kind === 'reset'
+          ? 'Your password for the Sloka Academy admin portal has been reset.'
+          : `An account has been created for you on the Sloka Academy admin portal (role: ${a.roleName}).`,
+        '',
+        `Sign in at: ${a.loginUrl}`,
+        `Email: ${a.to}`,
+        `Temporary password: ${a.password}`,
+        '',
+        'You will be asked to choose your own password when you sign in. Do not share this email.',
+        '',
+        'Sloka Academy',
+      ].join('\n');
+      const subject = a.kind === 'reset' ? 'Your Sloka Academy portal password was reset' : 'Your Sloka Academy admin portal account';
+      await send({ from: config.notifyFrom, to: a.to, subject, text });
+    },
+
+    /** The internship offer letter, as a PDF attachment. o: { to, name, courseDomain, offerLetterId, pdf } */
+    async sendOfferLetter(o) {
+      if (!smtpReady) throw new Error('Email is not configured on the server.');
+      const text = [
+        `Hi ${o.name},`,
+        '',
+        `Welcome to Sloka Academy. Your offer letter for the internship in ${o.courseDomain} is attached to this email as a PDF.`,
+        '',
+        `Offer letter ID: ${o.offerLetterId}`,
+        '',
+        'Sloka Academy',
+      ].join('\n');
+      await send({
+        from: config.notifyFrom,
+        to: o.to,
+        subject: `Your Sloka Academy internship offer letter (${o.offerLetterId})`,
+        text,
+        attachments: [{ filename: `Offer-Letter-${o.offerLetterId.replace(/\//g, '-')}.pdf`, content: o.pdf, contentType: 'application/pdf' }],
+      });
+    },
   };
 }
 
