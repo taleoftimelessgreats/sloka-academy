@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { certificateLinks, lmsHref, lmsIsExternal, navLinks, policyLinks, site } from "@/config/site";
+import { branchAreas, branchLabel, certificateLinks, lmsHref, lmsIsExternal, navLinks, policyLinks, site } from "@/config/site";
 import { STREAMS } from "@/data/streams";
 import { Logo } from "./Logo";
 import { SmartLink } from "./SmartLink";
@@ -21,7 +21,7 @@ export function SiteFooter() {
             <Logo className="h-[72px] w-auto" />
             <p className="mt-6 text-sm leading-relaxed text-muted">
               Two-month Internship Course Programs in technology, engineering, life sciences, healthcare and business.
-              Based in Madhapur, Hyderabad.
+              Branches in {branchAreas("and")}.
             </p>
             {socials.length > 0 && (
               <ul className="mt-6 flex flex-wrap gap-x-5 gap-y-2 text-sm">
@@ -76,13 +76,18 @@ export function SiteFooter() {
 
           <div>
             <FooterHeading>Visit or call</FooterHeading>
-            <address className="mt-5 text-sm not-italic leading-relaxed text-muted">
-              {contact.address.lines.map((line) => (
-                <span key={line} className="block">
-                  {line}
+            {contact.branches.map((b) => (
+              <address key={b.name} className="mt-5 text-sm not-italic leading-relaxed text-muted">
+                <span className="mb-1 block font-medium text-text">
+                  {b.name} <span className="font-normal text-muted-2">· {branchLabel(b)}</span>
                 </span>
-              ))}
-            </address>
+                {b.lines.map((line) => (
+                  <span key={line} className="block">
+                    {line}
+                  </span>
+                ))}
+              </address>
+            ))}
             <ul className="mt-6 space-y-2 text-sm">
               {contact.phones.map((p) => (
                 <li key={p.href}>

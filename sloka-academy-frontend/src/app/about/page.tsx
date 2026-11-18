@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import { ClosingCta, Em, PageHeader, SectionIntro } from "@/components/ui";
-import { site } from "@/config/site";
+import { branchLabel, site } from "@/config/site";
 import { CATEGORIES, VISIBLE_DOMAINS } from "@/data/domains";
 
 export const metadata: Metadata = {
@@ -10,6 +10,8 @@ export const metadata: Metadata = {
     "Sloka Academy runs two-month Internship Course Programs that combine structured teaching, practical projects and internship opportunities.",
   alternates: { canonical: "/about/" },
 };
+
+const primaryBranch = site.contact.branches.find((b) => b.primary) ?? site.contact.branches[0];
 
 const BELIEFS = [
   {
@@ -81,17 +83,24 @@ export default function AboutPage() {
             />
           </div>
           <div>
-            <SectionIntro kicker="Visit us" title={<>Come and see us <Em>in Madhapur.</Em></>}>
+            <SectionIntro kicker="Visit us" title={<>Come and see us <Em>in {primaryBranch.city}.</Em></>}>
               The best way to judge a program is to talk to the people who run it. Our admissions team is happy to meet
               you, look at your background and walk you through the domains.
             </SectionIntro>
-            <address className="glass mt-10 p-6 not-italic leading-relaxed text-text/90">
-              {site.contact.address.lines.map((line) => (
-                <span key={line} className="block">
-                  {line}
-                </span>
+            <div className="mt-10 grid gap-4">
+              {site.contact.branches.map((b) => (
+                <address key={b.name} className="glass p-6 not-italic leading-relaxed text-text/90">
+                  <span className="kicker mb-3 flex">
+                    {b.name} · {branchLabel(b)}
+                  </span>
+                  {b.lines.map((line) => (
+                    <span key={line} className="block">
+                      {line}
+                    </span>
+                  ))}
+                </address>
               ))}
-            </address>
+            </div>
           </div>
         </div>
       </section>

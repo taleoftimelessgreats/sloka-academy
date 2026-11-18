@@ -3,11 +3,11 @@ import { Icon } from "@/components/Icon";
 import { InquiryForm } from "@/components/InquiryForm";
 import { SmartLink } from "@/components/SmartLink";
 import { Em, PageHeader } from "@/components/ui";
-import { enquiryMailto, formsEnabled, preRegisterIsExternal, site } from "@/config/site";
+import { branchAreas, branchLabel, enquiryMailto, formsEnabled, preRegisterIsExternal, site } from "@/config/site";
 
 export const metadata: Metadata = {
   title: "Contact",
-  description: "Call, email or visit Sloka Academy admissions in Madhapur, Hyderabad.",
+  description: `Call, email or visit Sloka Academy admissions in ${branchAreas()}.`,
   alternates: { canonical: "/contact/" },
 };
 
@@ -23,7 +23,7 @@ export default function ContactPage() {
         image="/images/studio.webp"
       >
         <p className="lede max-w-xl">
-          Questions about a domain, the fee or the next batch? Call or email admissions, or visit us in Madhapur.
+          Questions about a domain, the fee or the next batch? Call or email admissions, or visit us in {branchAreas()}.
         </p>
       </PageHeader>
 
@@ -47,20 +47,38 @@ export default function ContactPage() {
                 {contact.email}
               </a>
             </div>
-            <div className="glass p-8">
-              <p className="kicker">Visit</p>
-              <address className="mt-5 text-lg not-italic leading-relaxed text-text/90">
-                {contact.address.lines.map((line) => (
-                  <span key={line} className="block">
-                    {line}
-                  </span>
-                ))}
-              </address>
-              <SmartLink href={contact.address.mapUrl} className="link-glow mt-6">
-                Get directions
-                <Icon name="arrowUpRight" size={16} />
-              </SmartLink>
-            </div>
+            {contact.branches.map((b) => (
+              <div key={b.name} className="glass p-8">
+                <p className="kicker">Visit · {branchLabel(b)}</p>
+                <h2 className="display mt-4 text-[1.6rem]">{b.name}</h2>
+                <address className="mt-3 text-lg not-italic leading-relaxed text-text/90">
+                  {b.lines.map((line) => (
+                    <span key={line} className="block">
+                      {line}
+                    </span>
+                  ))}
+                </address>
+                {b.head && (
+                  <div className="mt-6 border-t border-line pt-5 text-sm leading-relaxed">
+                    <p className="text-muted">
+                      {b.head.role}: <span className="font-medium text-text">{b.head.name}</span>
+                    </p>
+                    <p className="mt-1.5 flex flex-wrap gap-x-5 gap-y-1">
+                      <a href={b.head.phone.href} className="transition-colors hover:text-red-hi">
+                        {b.head.phone.display}
+                      </a>
+                      <a href={`mailto:${b.head.email}`} className="break-all transition-colors hover:text-red-hi">
+                        {b.head.email}
+                      </a>
+                    </p>
+                  </div>
+                )}
+                <SmartLink href={b.mapUrl} className="link-glow mt-6" aria-label={`Get directions to the ${b.name} branch`}>
+                  Get directions
+                  <Icon name="arrowUpRight" size={16} />
+                </SmartLink>
+              </div>
+            ))}
           </div>
 
           <div id="enquire" className="relative self-start">

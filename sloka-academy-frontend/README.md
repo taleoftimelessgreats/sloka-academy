@@ -37,7 +37,7 @@ Without the API, `out/` is still a complete static site for any static host (URL
 
 | What | File |
 | --- | --- |
-| Program fee (original ₹14,999, current ₹9,999), LMS URL, pre-registration URL, phones, email, address, socials, support hours | `src/config/site.ts` |
+| Program fee (original ₹14,999, current ₹9,999), LMS URL, pre-registration URL, phones, email, branches (primary first, with addresses and the person in charge), socials, support hours | `src/config/site.ts` |
 | Photography (Unsplash, monochrome; replace with the academy's own) | `public/images/` (see `CREDITS.md`) |
 | All 42 domains: name, category, stream tags, search aliases, availability, curriculum, fees, batches, brochure | `src/data/domains.ts` |
 | Stream filter buttons (order, URL ids, aliases) | `src/data/streams.ts` |

@@ -8,6 +8,17 @@
 /** NEXT_PUBLIC_API_URL as set at build time: "" (no API), "/" (this domain) or a full URL. */
 const apiSetting = (process.env.NEXT_PUBLIC_API_URL ?? "").trim();
 
+/** A Sloka Academy branch. `head`, when set, is shown with the branch on the Contact page. */
+export interface Branch {
+  /** The area, e.g. "Madhapur". */
+  name: string;
+  city: string;
+  primary: boolean;
+  lines: string[];
+  mapUrl: string;
+  head?: { name: string; role: string; phone: { display: string; href: string }; email: string };
+}
+
 export const site = {
   name: "Sloka Academy",
   programName: "Internship Course Program",
@@ -57,16 +68,34 @@ export const site = {
     whatsapp: "",
     // CONFIRM: support hours, e.g. "Monday to Saturday, 9:30 AM – 6:30 PM IST". Hidden while empty.
     supportHours: "",
-    address: {
-      lines: [
-        "4th Floor, NEA Building, Unit #403",
-        "Plot No. 470/471, 100 Feet Road, Ayyappa Society",
-        "Madhapur, Hyderabad, Telangana 500081",
-      ],
-      // CONFIRM: map destination.
-      mapUrl:
-        "https://www.google.com/maps/search/?api=1&query=NEA+Building+100+Feet+Road+Ayyappa+Society+Madhapur+Hyderabad+500081",
-    },
+    /** Branches, the primary branch first. CONFIRM: map destinations. */
+    branches: [
+      {
+        name: "Barakatpura",
+        city: "Hyderabad",
+        primary: true,
+        lines: ["3-4-493, Flat No. 502", "Om Sri Maa Gayatri Plaza, Barakatpura", "Hyderabad, Telangana 500027"],
+        mapUrl: "https://www.google.com/maps/search/?api=1&query=Om+Sri+Maa+Gayatri+Plaza+Barakatpura+Hyderabad+500027",
+        head: {
+          name: "Sanjay Kumar Surya",
+          role: "Director",
+          phone: { display: "+91 93470 30881", href: "tel:+919347030881" },
+          email: "sanjay@slokaacademy.com",
+        },
+      },
+      {
+        name: "Madhapur",
+        city: "Hyderabad",
+        primary: false,
+        lines: [
+          "4th Floor, NEA Building, Unit #403",
+          "Plot No. 470/471, 100 Feet Road, Ayyappa Society",
+          "Madhapur, Hyderabad, Telangana 500081",
+        ],
+        mapUrl:
+          "https://www.google.com/maps/search/?api=1&query=NEA+Building+100+Feet+Road+Ayyappa+Society+Madhapur+Hyderabad+500081",
+      },
+    ] as Branch[],
   },
 
   /** CONFIRM: approved social profiles. Empty entries are hidden. */
@@ -88,6 +117,20 @@ export const site = {
 } as const;
 
 export const formsEnabled = apiSetting !== "";
+
+/** "A", "A or B", "A, B or C" (conjunction "and" or "or"). */
+const joinList = (items: string[], conjunction: "and" | "or") =>
+  items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} ${conjunction} ${items[items.length - 1]}`;
+
+/** Where to visit, for page copy: e.g. "Barakatpura or Madhapur, Hyderabad". */
+export const branchAreas = (conjunction: "and" | "or" = "or") => {
+  const { branches } = site.contact;
+  const cities = [...new Set(branches.map((b) => b.city))];
+  return cities.length === 1
+    ? `${joinList(branches.map((b) => b.name), conjunction)}, ${cities[0]}`
+    : joinList(branches.map((b) => `${b.name}, ${b.city}`), conjunction);
+};
+export const branchLabel = (b: Branch) => (b.primary ? "Primary branch" : "Branch");
 
 export const lmsHref = site.lmsUrl || "/lms/";
 export const lmsIsExternal = Boolean(site.lmsUrl);
