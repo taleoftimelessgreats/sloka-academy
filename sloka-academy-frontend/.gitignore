@@ -22,6 +22,8 @@
 
 # pdf.js worker and fonts, copied from node_modules by scripts/copy-pdfjs.mjs
 /public/pdfjs/
+# Word/PowerPoint converter libraries, copied from node_modules by scripts/copy-admin-vendor.mjs
+/public/admin/vendor/
 
 # misc
 .DS_Store

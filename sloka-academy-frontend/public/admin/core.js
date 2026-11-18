@@ -197,6 +197,7 @@ export async function ensureMeta(force = false) {
   state.meta = meta;
   state.metaAt = Date.now();
   state.staff = staff.staff;
+  state.scope = staff.scope;
   state.today = meta.today || state.today;
   const toMap = (list) => new Map(list.map((o) => [o.id, o.label]));
   state.labels = {
@@ -217,7 +218,8 @@ export async function ensureMeta(force = false) {
 // Permissions ('module.action') come from the server with the signed-in user (backend src/permissions.js).
 // They only decide what the portal shows: the API checks them on every request.
 export const can = (permission) => Boolean(state.me && state.me.permissions && state.me.permissions.includes(permission));
-export const canAny = (...permissions) => permissions.some(can);
+// Any one of the permissions; 'a+b' needs both (e.g. certificates also show participants' personal data).
+export const canAny = (...permissions) => permissions.some((p) => p.split('+').every(can));
 export const isClosed = (status) => state.meta && state.meta.closedStatuses.includes(status);
 
 export function statusBadge(status) {
@@ -235,11 +237,19 @@ export function followUpCell(inq) {
   return h('span', { class: cls || null, title: cls === 'fu-overdue' ? 'Overdue' : null }, text);
 }
 
+// The associates within the signed-in user's data scope: everyone for "All records"; themselves and everyone
+// reporting to them for "Team records"; themselves for "Own records". Filters and pickers offer only these.
+const scopedStaff = () => state.staff.filter((s) => s.inScope !== false);
+
+/** Options for an assignee / associate picker: active associates in scope (and the current one). */
 export function staffOptions(currentId) {
   return state.staff
-    .filter((s) => s.active || s.id === currentId)
+    .filter((s) => (s.active && s.inScope !== false) || s.id === currentId)
     .map((s) => ({ id: s.id, label: s.active ? s.name : `${s.name} (inactive)` }));
 }
+
+/** Options for an associate filter: associates in scope, inactive ones marked. */
+export const staffFilterOptions = () => scopedStaff().map((s) => ({ id: s.id, label: s.active ? s.name : `${s.name} (inactive)` }));
 
 // ------------------------------------------------------------------ router
 

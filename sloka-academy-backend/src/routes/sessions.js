@@ -6,6 +6,7 @@ const { generateSessionCode } = require('../certIds');
 const { parseRegFilters } = require('../certificateRepo');
 const { validationError, HttpError } = require('../util');
 const { certificatesCsv } = require('./certificates');
+const { mappingPending } = require('../certificateTemplates');
 
 const hasErrors = (o) => Object.keys(o).length > 0;
 
@@ -24,6 +25,7 @@ function sessionsRouter({ config, certRepo, templateRepo, auth }) {
     if (!values.templateId || values.templateId === currentId) return;
     const t = await templateRepo.get(values.templateId);
     if (!t || t.archived) errors.templateId = 'Choose an available certificate design.';
+    else if (mappingPending(t.layout)) errors.templateId = 'Map the placeholders of this design first (Settings → Certificate designs).';
   }
   // studentLinkWithCode fills in the code on the form: share it only once the session is over.
   const withLink = (s) => {
@@ -83,7 +85,8 @@ function sessionsRouter({ config, certRepo, templateRepo, auth }) {
     return res.status(204).end();
   });
 
-  router.get('/:id/export', may('export'), async (req, res) => {
+  // The participants of a session (their personal data needs Participant (student) data → View too).
+  router.get('/:id/export', may('export'), auth.requirePermission('students.view'), async (req, res) => {
     const s = await load(parseId(req.params.id));
     const f = parseRegFilters({ sessionId: String(s.id) });
     const slug = s.sessionDate;

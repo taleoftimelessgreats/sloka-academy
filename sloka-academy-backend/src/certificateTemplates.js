@@ -66,13 +66,17 @@ const DEFAULT_LAYOUT = Object.freeze({
 
 /**
  * The first layout of an uploaded design. A PDF whose text has placeholders gets them mapped to details
- * (suggested from their names) and prints nothing else; otherwise the default positions.
+ * (suggested from their names) and prints nothing else; otherwise the default positions. Placeholders wait for
+ * staff to confirm what each one is (placeholdersConfirmed) before the design can be used.
  */
 function initialLayout(info) {
   if (!info.placeholders || !info.placeholders.length) return DEFAULT_LAYOUT;
   const fields = Object.fromEntries(Object.entries(DEFAULT_LAYOUT.fields).map(([id, field]) => [id, { ...field, show: false }]));
-  return { fields, placeholders: toMappings(info.placeholders, PLACEHOLDER_FIELDS, info.pageWidth) };
+  return { fields, placeholders: toMappings(info.placeholders, PLACEHOLDER_FIELDS, info.pageWidth), placeholdersConfirmed: false };
 }
+
+/** True while a layout has placeholders nobody has confirmed the mapping of (new uploads). */
+const mappingPending = (layout) => Boolean(layout && layout.placeholders && layout.placeholders.length && layout.placeholdersConfirmed === false);
 
 /** Placeholders in a design's file, with suggested details (PDF only; [] for images). */
 async function detectPlaceholders(file, fileType, pageWidth) {
@@ -130,64 +134,86 @@ function validateLayout(input) {
   if (!Object.keys(errors).length && !fields.name.show && !mapped.value.some((m) => m.field === 'name')) {
     errors['name.show'] = 'The student name must be printed: show it, or map a placeholder to it.';
   }
-  return { value: Object.keys(errors).length ? null : { fields, placeholders: mapped.value }, errors };
+  // Saving a layout confirms its mapping unless it says otherwise.
+  const placeholdersConfirmed = input.placeholdersConfirmed !== false;
+  return { value: Object.keys(errors).length ? null : { fields, placeholders: mapped.value, placeholdersConfirmed }, errors };
 }
 
 class TemplateFileError extends Error {}
 
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const ZIP_SIGNATURE = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+const OLE_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]); // .doc, .ppt
+
+/** What an uploaded file is, from its first bytes: pdf, image, docx, pptx, zip, ole or null. */
+function sniffTemplateFile(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 12) return null;
+  const head = buf.subarray(0, 12).toString('latin1');
+  if (head.startsWith('%PDF-')) return 'pdf';
+  if (buf.subarray(0, 8).equals(PNG_SIGNATURE) || (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)) return 'image';
+  if ((head.startsWith('RIFF') && head.slice(8, 12) === 'WEBP') || head.startsWith('GIF8') || head.startsWith('BM')) return 'image';
+  if (buf.subarray(0, 4).equals(ZIP_SIGNATURE)) {
+    // Office files are ZIP archives; the names of their parts are stored uncompressed.
+    if (buf.includes('word/document.xml')) return 'docx';
+    if (buf.includes('ppt/presentation.xml')) return 'pptx';
+    return 'zip';
+  }
+  if (buf.subarray(0, 8).equals(OLE_SIGNATURE)) return 'ole';
+  return null;
+}
+
 /**
- * Check an uploaded template file (certificate design or offer letter) and work out its page size.
- * Returns { fileType, pageWidth, pageHeight, pageCount (PDF), placeholders (found in the first maxPages pages) };
+ * Only files whose text can be searched for placeholders are accepted: PDF. Word and PowerPoint files are
+ * converted to PDF by the portal before they are uploaded (public/admin/convert). Throws TemplateFileError.
+ */
+function checkUploadedFile(buf) {
+  const kind = sniffTemplateFile(buf);
+  if (kind === 'pdf') return;
+  if (kind === 'image') throw new TemplateFileError('Images cannot be searched for placeholders, so they cannot be used as templates. Upload a PDF, Word (.docx) or PowerPoint (.pptx) file.');
+  if (kind === 'docx' || kind === 'pptx') {
+    throw new TemplateFileError('Word and PowerPoint files are converted to PDF by the portal when you upload them in Settings. Upload it there, or save it as PDF and upload that.');
+  }
+  if (kind === 'ole') throw new TemplateFileError('This is an older Word or PowerPoint file (.doc or .ppt). Save it as .docx, .pptx or PDF, and upload that.');
+  throw new TemplateFileError('Upload a PDF, Word (.docx) or PowerPoint (.pptx) file.');
+}
+
+/** The file the portal converted an upload from ('docx' | 'pptx'), from the upload's `source` query parameter. */
+const sourceTypeOf = (raw) => (raw === 'docx' || raw === 'pptx' ? raw : null);
+
+/**
+ * Check an uploaded template file (certificate design or offer letter: a PDF) and work out its page size.
+ * Returns { fileType, pageWidth, pageHeight, pageCount, placeholders (found in the first maxPages pages) };
  * throws TemplateFileError with a message for staff.
  */
 async function inspectTemplateFile(buf, { maxPages = 1 } = {}) {
   if (!Buffer.isBuffer(buf) || buf.length < 8) throw new TemplateFileError('The file is empty.');
-  const isPng = buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
-  const isJpeg = buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff;
-  const isPdf = buf.subarray(0, 5).toString('latin1') === '%PDF-';
-  if (isPdf) {
-    let src;
-    let page;
-    try {
-      src = await PDFDocument.load(buf, { updateMetadata: false });
-      page = src.getPageCount() > 0 ? src.getPage(0) : null;
-    } catch (err) {
-      if (/encrypt/i.test(err.message)) throw new TemplateFileError('This PDF is password-protected. Export it again without a password.');
-      throw new TemplateFileError('This PDF could not be read. Export it again from your design tool (PDF, single page).');
-    }
-    if (!page) throw new TemplateFileError('This PDF has no pages.');
-    if (page.getRotation().angle % 360 !== 0) throw new TemplateFileError('The first page is rotated. Export the page without rotation.');
-    const { width, height } = page.getSize();
-    if (!(width >= 144 && height >= 144 && width <= 5000 && height <= 5000)) throw new TemplateFileError('The page size is unusual. Use A4 or Letter.');
-    // Trial run: some PDFs parse but cannot be placed on a certificate (e.g. an empty page).
-    try {
-      const trial = await PDFDocument.create();
-      const [embedded] = await trial.embedPdf(src, [0]);
-      trial.addPage([width, height]).drawPage(embedded);
-      await trial.save();
-    } catch {
-      throw new TemplateFileError('This PDF could not be used as a background (the first page may be empty). Export the design again as a PDF.');
-    }
-    // Placeholders in the design's text ({{Student Name}} and the like). A PDF that cannot be read for text is still usable.
-    const placeholders = await extractPlaceholders(buf, { maxPages }).catch(() => []);
-    const pageCount = src.getPageCount();
-    return { fileType: 'pdf', pageWidth: width, pageHeight: height, pageCount, placeholders };
+  checkUploadedFile(buf);
+  let src;
+  let page;
+  try {
+    src = await PDFDocument.load(buf, { updateMetadata: false });
+    page = src.getPageCount() > 0 ? src.getPage(0) : null;
+  } catch (err) {
+    if (/encrypt/i.test(err.message)) throw new TemplateFileError('This PDF is password-protected. Export it again without a password.');
+    throw new TemplateFileError('This PDF could not be read. Export it again from your design tool (PDF, single page).');
   }
-  if (isPng || isJpeg) {
-    const doc = await PDFDocument.create();
-    let img;
-    try {
-      img = isPng ? await doc.embedPng(buf) : await doc.embedJpg(buf);
-    } catch {
-      throw new TemplateFileError('This image could not be read. Save it again as PNG or JPEG.');
-    }
-    if (img.width < 600 || img.height < 400) throw new TemplateFileError('The image is too small to print well. Use at least 1754 × 1240 pixels (A4 at 150 dpi).');
-    // Fit the long side of A4 (landscape or portrait, following the image).
-    const landscape = img.width >= img.height;
-    const pageWidth = landscape ? 841.89 : 595.28;
-    return { fileType: isPng ? 'png' : 'jpeg', pageWidth, pageHeight: Math.round(((pageWidth * img.height) / img.width) * 100) / 100, placeholders: [] };
+  if (!page) throw new TemplateFileError('This PDF has no pages.');
+  if (page.getRotation().angle % 360 !== 0) throw new TemplateFileError('The first page is rotated. Export the page without rotation.');
+  const { width, height } = page.getSize();
+  if (!(width >= 144 && height >= 144 && width <= 5000 && height <= 5000)) throw new TemplateFileError('The page size is unusual. Use A4 or Letter.');
+  // Trial run: some PDFs parse but cannot be placed on a certificate (e.g. an empty page).
+  try {
+    const trial = await PDFDocument.create();
+    const [embedded] = await trial.embedPdf(src, [0]);
+    trial.addPage([width, height]).drawPage(embedded);
+    await trial.save();
+  } catch {
+    throw new TemplateFileError('This PDF could not be used as a background (the first page may be empty). Export the design again as a PDF.');
   }
-  throw new TemplateFileError('Upload a PDF, PNG or JPEG file.');
+  // Placeholders in the design's text ({{Student Name}} and the like). A PDF that cannot be read for text is still usable.
+  const placeholders = await extractPlaceholders(buf, { maxPages }).catch(() => []);
+  const pageCount = src.getPageCount();
+  return { fileType: 'pdf', pageWidth: width, pageHeight: height, pageCount, placeholders };
 }
 
 const toApi = (t) =>
@@ -195,6 +221,7 @@ const toApi = (t) =>
     id: t.id,
     name: t.name,
     fileType: t.file_type,
+    sourceType: t.source_type ?? null, // docx | pptx: converted to PDF by the portal when uploaded
     fileSize: t.file_size,
     pageWidth: t.page_width,
     pageHeight: t.page_height,
@@ -208,7 +235,7 @@ const toApi = (t) =>
   };
 
 const SELECT = `
-  SELECT t.id, t.name, t.file_type, t.file_size, t.page_width, t.page_height, t.layout, t.is_default, t.archived,
+  SELECT t.id, t.name, t.file_type, t.source_type, t.file_size, t.page_width, t.page_height, t.layout, t.is_default, t.archived,
     t.created_by, t.created_at, t.updated_at, u.name AS created_by_name,
     (SELECT COUNT(*) FROM certificate_registrations r WHERE r.template_id = t.id) AS cert_count,
     (SELECT COUNT(*) FROM sessions s WHERE s.template_id = t.id) AS session_count
@@ -245,13 +272,13 @@ function createTemplateRepo(db) {
     return template;
   }
 
-  async function create({ name, file, fileType, pageWidth, pageHeight, layout = DEFAULT_LAYOUT }, userId) {
+  async function create({ name, file, fileType, sourceType = null, pageWidth, pageHeight, layout = DEFAULT_LAYOUT }, userId) {
     const t = now();
     const id = await db.transaction(async () => {
       const r = await db.run(
-        `INSERT INTO certificate_templates (name, file_type, file_size, page_width, page_height, layout, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [name, fileType, file.length, pageWidth, pageHeight, JSON.stringify(layout), userId, t, t],
+        `INSERT INTO certificate_templates (name, file_type, source_type, file_size, page_width, page_height, layout, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [name, fileType, sourceType, file.length, pageWidth, pageHeight, JSON.stringify(layout), userId, t, t],
       );
       for (let part = 0, at = 0; at < file.length; part++, at += FILE_PART_BYTES) {
         await db.run('INSERT INTO certificate_template_files (template_id, part, data) VALUES (?, ?, ?)', [
@@ -325,6 +352,8 @@ module.exports = {
   DEFAULT_LAYOUT,
   validateLayout,
   inspectTemplateFile,
+  sourceTypeOf,
+  mappingPending,
   TemplateFileError,
   createTemplateRepo,
 };

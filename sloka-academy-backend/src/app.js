@@ -125,29 +125,40 @@ function createApp({ db, config, notifier, emailQuota, sheetsFetch, background =
     });
   });
 
-  // Associate directory for assignee and BD Associate pickers (any signed-in user; names only).
+  // Associate directory for assignee and BD Associate pickers and filters (any signed-in user; names only).
+  // inScope: within the user's data scope (themselves, and for team scope everyone reporting to them).
   app.get('/api/staff', auth.authenticate, async (req, res) => {
-    const users = await db.all('SELECT id, name, role, active, reporting_manager_id FROM users ORDER BY active DESC, name');
-    res.json({ staff: users.map((u) => ({ id: u.id, name: u.name, role: u.role, active: u.active === 1, reportingManagerId: u.reporting_manager_id })) });
+    const [users, scopeIds] = await Promise.all([
+      db.all('SELECT id, name, role, active, reporting_manager_id FROM users ORDER BY active DESC, name'),
+      auth.scopeUserIds(req.user),
+    ]);
+    res.json({
+      staff: users.map((u) => ({
+        id: u.id, name: u.name, role: u.role, active: u.active === 1, reportingManagerId: u.reporting_manager_id, inScope: !scopeIds || scopeIds.includes(u.id),
+      })),
+      scope: req.user.scope,
+    });
   });
 
-  // The overview: each section only for those who may see it (registrations within their scope).
+  // The overview: each section only for those who may see it (registrations, enquiries and students within
+  // their data scope).
   app.get('/api/stats', auth.authenticate, async (req, res) => {
     const today = localDate();
     const has = (p) => req.user.permissions.has(p);
     const out = { today };
     const jobs = [];
-    if (has('enquiries.view')) jobs.push(repo.stats(today).then((s) => Object.assign(out, s)));
+    const scopeIds = await auth.scopeUserIds(req.user);
+    if (has('enquiries.view')) jobs.push(repo.stats(today, scopeIds).then((s) => Object.assign(out, s)));
     if (has('students.view')) {
-      jobs.push(studentRepo.count().then((n) => (out.students = n)));
+      jobs.push(studentRepo.count(scopeIds).then((n) => (out.students = n)));
       jobs.push(verifications.openCount().then((n) => (out.pendingVerifications = n)));
     }
     if (has('certificates.view')) {
       jobs.push(certRepo.stats(today).then((c) => (out.certificates = c)));
-      jobs.push(certRepo.listRegs({ where: '', params: [], page: 1, pageSize: 8 }).then((r) => (out.recentRegistrations = r.items)));
+      if (has('students.view')) jobs.push(certRepo.listRegs({ where: '', params: [], page: 1, pageSize: 8 }).then((r) => (out.recentRegistrations = r.items)));
     }
     if (has('sessions.view')) jobs.push(certRepo.listSessions().then((list) => (out.sessions = list.slice(0, 6))));
-    if (has('registrations.view')) jobs.push(auth.scopeUserIds(req.user).then((ids) => registrations.stats(ids, today)).then((r) => (out.registrations = r)));
+    if (has('registrations.view')) jobs.push(registrations.stats(scopeIds, today).then((r) => (out.registrations = r)));
     if (has('students.edit')) jobs.push(registrations.flags.openCount().then((n) => (out.openRegistrationFlags = n)));
     if (has('settings.view')) {
       jobs.push(

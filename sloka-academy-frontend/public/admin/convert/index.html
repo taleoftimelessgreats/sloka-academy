@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Template converter · Sloka Academy Admin</title>
+    <!--
+      Converts Word and PowerPoint templates to PDF in the browser (convert.js). Opened by the portal in a hidden
+      frame. It has a Content-Security-Policy of its own (vercel.json) that allows the inline styles the renderers use.
+      The libraries are copied from node_modules into ../vendor/ by scripts/copy-admin-vendor.mjs.
+    -->
+    <link rel="stylesheet" href="convert.css" />
+    <script src="../vendor/jszip.min.js"></script>
+    <script src="../vendor/docx-preview.min.js"></script>
+    <script src="../vendor/html2canvas.min.js"></script>
+    <script src="../vendor/pdf-lib.min.js"></script>
+    <script type="module" src="convert.js"></script>
+  </head>
+  <body>
+    <div id="stage"></div>
+  </body>
+</html>

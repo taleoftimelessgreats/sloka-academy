@@ -4,6 +4,7 @@ const C = require('./constants');
 const { localDate } = require('./util');
 const { linkStudent, pruneStudent: pruneProfile } = require('./studentMatch');
 const { openVerification, closeForRecord } = require('./profileVerification');
+const { enquiryScope } = require('./scope');
 
 // API field -> column. Used for updates and as the sort whitelist.
 const COLUMNS = {
@@ -76,11 +77,17 @@ const escapeLike = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 /**
  * Parse list/export filters from a query object. Returns { errors, where, params, order, page, pageSize }.
  * All user values are bound as parameters; only whitelisted SQL fragments are concatenated.
+ * scopeIds: the associates whose enquiries the user's data scope covers (null = all; see scope.js).
  */
-function parseFilters(query, { userId, today = localDate() } = {}) {
+function parseFilters(query, { userId, today = localDate(), scopeIds = null } = {}) {
   const errors = {};
   const clauses = [];
   const params = [];
+  const scope = enquiryScope(scopeIds);
+  if (scope.sql) {
+    clauses.push(scope.sql);
+    params.push(...scope.params);
+  }
   const str = (key) => {
     const v = query[key];
     if (v === undefined || v === '') return undefined;
@@ -355,14 +362,20 @@ function createInquiryRepo(db, { studentIdPrefix = 'SLK' } = {}) {
     });
   }
 
-  async function stats(today = localDate()) {
+  /** The pipeline summary, within the data scope (scopeIds: see parseFilters). */
+  async function stats(today = localDate(), scopeIds = null) {
+    const scope = enquiryScope(scopeIds);
+    const inScope = scope.sql ? `AND ${scope.sql}` : '';
+    const sp = scope.params;
     const one = async (sql, p = []) => (await db.get(sql, p)).n;
     const conversion = async (column, kind, order) => {
-      const rows = await db.all(`
-        SELECT ${column} AS k, COUNT(*) AS total,
-          SUM(CASE WHEN status = 'pre-registered' THEN 1 ELSE 0 END) AS pre,
-          SUM(CASE WHEN status = 'enrolled' THEN 1 ELSE 0 END) AS enrolled
-        FROM inquiries GROUP BY ${column}`);
+      const rows = await db.all(
+        `SELECT i.${column} AS k, COUNT(*) AS total,
+          SUM(CASE WHEN i.status = 'pre-registered' THEN 1 ELSE 0 END) AS pre,
+          SUM(CASE WHEN i.status = 'enrolled' THEN 1 ELSE 0 END) AS enrolled
+        FROM inquiries i WHERE 1 = 1 ${inScope} GROUP BY i.${column}`,
+        sp,
+      );
       const byKey = new Map(rows.map((r) => [r.k, r]));
       const keys = [...order.filter((k) => byKey.has(k)), ...(byKey.has(null) ? [null] : [])];
       return keys.map((k) => {
@@ -378,10 +391,10 @@ function createInquiryRepo(db, { studentIdPrefix = 'SLK' } = {}) {
       });
     };
     const [statusRows, total, dueToday, overdue, byStream, byPlan] = await Promise.all([
-      db.all('SELECT status, COUNT(*) AS n FROM inquiries GROUP BY status'),
-      one('SELECT COUNT(*) AS n FROM inquiries'),
-      one(`SELECT COUNT(*) AS n FROM inquiries WHERE next_follow_up = ? AND status NOT IN (${CLOSED_SQL})`, [today]),
-      one(`SELECT COUNT(*) AS n FROM inquiries WHERE next_follow_up < ? AND status NOT IN (${CLOSED_SQL})`, [today]),
+      db.all(`SELECT i.status, COUNT(*) AS n FROM inquiries i WHERE 1 = 1 ${inScope} GROUP BY i.status`, sp),
+      one(`SELECT COUNT(*) AS n FROM inquiries i WHERE 1 = 1 ${inScope}`, sp),
+      one(`SELECT COUNT(*) AS n FROM inquiries i WHERE i.next_follow_up = ? AND i.status NOT IN (${CLOSED_SQL}) ${inScope}`, [today, ...sp]),
+      one(`SELECT COUNT(*) AS n FROM inquiries i WHERE i.next_follow_up < ? AND i.status NOT IN (${CLOSED_SQL}) ${inScope}`, [today, ...sp]),
       conversion('stream', 'stream', C.STREAM_IDS),
       conversion('plan', 'plan', C.PLAN_IDS),
     ]);

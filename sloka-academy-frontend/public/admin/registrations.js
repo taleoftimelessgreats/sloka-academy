@@ -4,8 +4,8 @@
 // Rendered with DOM APIs / textContent only. Never use innerHTML with data.
 
 import {
-  api, can, clearErrors, ensureMeta, errorText, field, fieldMessage, fmtDate, fmtDateTime, fmtMoney, go, h, label, mount, newId, pagerEl,
-  selectEl, showErrors, state, toast,
+  addDays, api, can, clearErrors, ensureMeta, errorText, field, fieldMessage, fmtDate, fmtDateTime, fmtMoney, go, h, label, mount, newId, pagerEl,
+  selectEl, showErrors, staffFilterOptions, staffOptions, state, toast,
 } from './core.js';
 
 const LIST_FILTERS = ['q', 'courseId', 'bdAssociateId', 'status', 'regFrom', 'regTo', 'dueFrom', 'dueTo', 'view', 'sort'];
@@ -30,17 +30,140 @@ export function paymentBadge(e) {
 const OFFER_STATUS = { generated: 'Generated', sent: 'Sent', failed: 'Failed' };
 const offerBadge = (status) => h('span', { class: 'badge', 'data-status': `offer-${status}` }, OFFER_STATUS[status] || status);
 
+/**
+ * Issue the offer letter of a fully paid registration: the internship start date is asked for every time (it is
+ * printed on the letter). mode 'send' emails it (when email works), 'regenerate' rebuilds it. Resolves to the
+ * letter, or null if closed.
+ */
+function offerLetterDialog(e, letter, mode) {
+  return new Promise((resolve) => {
+    const emailOn = state.meta.emailEnabled && Boolean(e.student.email);
+    const dialog = h('dialog', { class: 'modal', 'aria-labelledby': 'offer-dialog-title' });
+    const close = (value) => {
+      dialog.close();
+      dialog.remove();
+      resolve(value);
+    };
+    const start = h('input', { type: 'date', name: 'startDate', required: true, min: e.registrationDate, value: (letter && letter.internshipStartDate) || '' });
+    const useBatch = e.batchStartDate && e.batchStartDate >= e.registrationDate
+      ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { start.value = e.batchStartDate; start.focus(); } }, `Use the batch start date (${fmtDate(e.batchStartDate)})`)
+      : null;
+    const email = h('input', { type: 'checkbox', id: newId(), checked: mode === 'send' && emailOn, disabled: !emailOn });
+    const submit = h('button', { class: 'btn btn-primary', type: 'submit' });
+    const setLabel = () => {
+      submit.textContent = email.checked ? 'Send offer letter' : letter ? 'Regenerate offer letter' : 'Issue offer letter';
+    };
+    email.addEventListener('change', setLabel);
+    setLabel();
+    const form = h(
+      'form',
+      { class: 'stack', novalidate: true },
+      h('h2', { id: 'offer-dialog-title' }, mode === 'regenerate' ? 'Regenerate the offer letter' : 'Send the offer letter'),
+      h('p', { class: 'muted' }, `${e.student.name} · ${e.course.name}${letter ? ` · ${letter.offerLetterId}` : ''}. The fee is fully paid.`),
+      field('Internship start date', start, { required: true, hint: 'Printed on the letter. Required.' }),
+      useBatch,
+      emailOn
+        ? h('label', { class: 'check', for: email.id }, email, ` Email it to ${e.student.email}`)
+        : h('p', { class: 'muted small' }, state.meta.emailEnabled ? 'The student has no email address: download the letter and send it yourself.' : 'Email is not set up on the server: download the letter and send it yourself.'),
+      mode === 'regenerate' && letter ? h('p', { class: 'muted small' }, 'The letter keeps its ID; its date becomes today and it uses the current template.') : null,
+      h('p', { class: 'form-error', role: 'alert' }),
+      h('div', { class: 'form-actions' }, submit, h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => close(null) }, 'Cancel')),
+    );
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      clearErrors(form);
+      if (!start.value) {
+        showErrors(form, { status: 400, data: { error: 'validation', fields: { startDate: 'Enter the internship start date.' } } });
+        start.focus();
+        return;
+      }
+      submit.disabled = true;
+      try {
+        const action = email.checked ? 'send' : 'generate';
+        const r = await api('POST', `/api/registrations/${e.id}/offer-letter/${action}`, { startDate: start.value });
+        close(r.offerLetter);
+      } catch (err) {
+        showErrors(form, err);
+        submit.disabled = false;
+      }
+    });
+    dialog.addEventListener('cancel', (ev) => {
+      ev.preventDefault();
+      close(null);
+    });
+    dialog.append(form);
+    document.body.append(dialog);
+    dialog.showModal();
+    start.focus();
+  });
+}
+
 // ------------------------------------------------------------------ list
+
+// The Period filter: quick picks for the registration dates (from the server's today).
+const PERIODS = [
+  { id: '', label: 'Any time' },
+  { id: 'today', label: 'Today' },
+  { id: 'last7', label: 'Last 7 days' },
+  { id: 'this-month', label: 'This month' },
+  { id: 'last-month', label: 'Last month' },
+  { id: 'last30', label: 'Last 30 days' },
+  { id: 'this-quarter', label: 'This quarter' },
+  { id: 'this-fy', label: 'This financial year' },
+  { id: 'custom', label: 'Custom dates' },
+];
+
+/** [from, to] (YYYY-MM-DD) of a Period quick pick, or null. */
+function periodRange(id, today) {
+  const [y, m] = today.split('-').map(Number);
+  const ymd = (yy, mm, dd) => new Date(Date.UTC(yy, mm - 1, dd)).toISOString().slice(0, 10); // month/day overflow rolls over
+  switch (id) {
+    case 'today':
+      return [today, today];
+    case 'last7':
+      return [addDays(today, -6), today];
+    case 'last30':
+      return [addDays(today, -29), today];
+    case 'this-month':
+      return [ymd(y, m, 1), today];
+    case 'last-month':
+      return [ymd(y, m - 1, 1), ymd(y, m, 0)];
+    case 'this-quarter':
+      return [ymd(y, Math.floor((m - 1) / 3) * 3 + 1, 1), today];
+    case 'this-fy': // April to March
+      return [ymd(m >= 4 ? y : y - 1, 4, 1), today];
+    default:
+      return null;
+  }
+}
+
+/** The Period quick pick that the registration dates match: '' (none), a preset id, or 'custom'. */
+function currentPeriod(from, to, today) {
+  if (!from && !to) return '';
+  const hit = PERIODS.find((p) => {
+    const r = periodRange(p.id, today);
+    return r && r[0] === from && r[1] === to;
+  });
+  return hit ? hit.id : 'custom';
+}
 
 export async function viewRegistrations(params, stale) {
   await ensureMeta();
   const query = new URLSearchParams();
   for (const k of LIST_FILTERS) if (params.get(k)) query.set(k, params.get(k));
   const page = Math.max(1, Number(params.get('page')) || 1);
-  const [data, courses, stats] = await Promise.all([api('GET', `/api/registrations?${query}&page=${page}&pageSize=25`), courseList(), api('GET', '/api/stats')]);
+  // The insights use the same filters as the list, so they always describe the registrations below them.
+  const [data, courses, ins, stats] = await Promise.all([
+    api('GET', `/api/registrations?${query}&page=${page}&pageSize=25`),
+    courseList(),
+    api('GET', `/api/registrations/insights?${query}`),
+    can('students.edit') ? api('GET', '/api/stats') : null,
+  ]);
   if (stale()) return;
   const meta = state.meta;
   const view = params.get('view') || '';
+  const today = state.today;
+  const i = ins.insights;
 
   const tabs = h(
     'nav',
@@ -50,29 +173,52 @@ export async function viewRegistrations(params, stale) {
       if (v.id) p.set('view', v.id);
       else p.delete('view');
       p.delete('sort');
-      const count = v.id === 'due-week' ? stats.registrations.dueThisWeek : v.id === 'overdue' ? stats.registrations.overdue : stats.registrations.total;
+      const count = v.id === 'due-week' ? ins.views.dueThisWeek : v.id === 'overdue' ? ins.views.overdue : ins.views.all;
       return h('a', { class: view === v.id ? 'tab active' : 'tab', href: `#/registrations${p.toString() ? `?${p}` : ''}`, 'aria-current': view === v.id ? 'page' : null }, v.label, h('span', { class: 'count' }, count));
     }),
   );
 
   const search = h('input', { type: 'search', name: 'q', placeholder: 'Search name, mobile, email or Student ID', value: params.get('q') || '', 'aria-label': 'Search' });
-  const bdAssociates = state.staff.map((s) => ({ id: s.id, label: s.active ? s.name : `${s.name} (inactive)` }));
+  const bdAssociates = staffFilterOptions(); // only the associates in the user's data scope (their team, for a manager)
   const selects = [
     ['courseId', courses.map((c) => ({ id: c.id, label: c.name })), 'All course domains'],
-    ['bdAssociateId', bdAssociates, 'Any BD Associate'],
+    ['bdAssociateId', bdAssociates, state.scope === 'all' ? 'Every associate' : state.scope === 'team' ? 'Whole team' : 'Me'],
     ['status', [...meta.paymentStatuses, { id: 'overdue', label: 'Overdue' }], 'Any payment status'],
   ].map(([name, list, empty]) => {
     const sel = selectEl(name, list, params.get(name) || '', { empty });
-    sel.setAttribute('aria-label', empty);
+    sel.setAttribute('aria-label', name === 'bdAssociateId' ? 'BD Associate' : empty);
     return sel;
   });
+  const dateInputs = {};
   const dates = [
     ['regFrom', 'Registered from'],
     ['regTo', 'Registered to'],
     ['dueFrom', 'Due from'],
     ['dueTo', 'Due to'],
-  ].map(([name, text]) => h('label', { class: 'date-filter' }, h('span', null, text), h('input', { type: 'date', name, value: params.get(name) || '' })));
-  const form = h('form', { class: 'filters filters-registrations', role: 'search' }, h('div', { class: 'search' }, search, h('button', { class: 'btn', type: 'submit' }, 'Search')), selects, h('div', { class: 'date-row' }, dates));
+  ].map(([name, text]) => {
+    dateInputs[name] = h('input', { type: 'date', name, value: params.get(name) || '' });
+    return h('label', { class: 'date-filter' }, h('span', null, text), dateInputs[name]);
+  });
+  const periodNow = currentPeriod(params.get('regFrom') || '', params.get('regTo') || '', today);
+  const period = selectEl('period', PERIODS.map((p) => ({ id: p.id, label: p.label })), periodNow);
+  period.removeAttribute('name'); // not a filter of its own: it sets the registration dates
+  period.setAttribute('aria-label', 'Period (registration date)');
+  // Runs before the form's change handler (which applies the filters).
+  period.addEventListener('change', () => {
+    if (period.value === 'custom') return dateInputs.regFrom.focus();
+    const r = periodRange(period.value, today);
+    dateInputs.regFrom.value = r ? r[0] : '';
+    dateInputs.regTo.value = r ? r[1] : '';
+    return undefined;
+  });
+  const form = h(
+    'form',
+    { class: 'filters filters-registrations', role: 'search' },
+    h('div', { class: 'search' }, search, h('button', { class: 'btn', type: 'submit' }, 'Search')),
+    period,
+    selects,
+    h('div', { class: 'date-row' }, dates),
+  );
   const apply = () => {
     const p = new URLSearchParams();
     if (search.value.trim()) p.set('q', search.value.trim());
@@ -86,7 +232,7 @@ export async function viewRegistrations(params, stale) {
     apply();
   });
   form.addEventListener('change', (e) => {
-    if (e.target !== search) apply();
+    if (e.target !== search && !(e.target === period && period.value === 'custom')) apply();
   });
 
   const td = (lbl, ...c) => h('td', { 'data-label': lbl }, ...c);
@@ -123,13 +269,102 @@ export async function viewRegistrations(params, stale) {
         : h('tr', null, h('td', { colspan: String(heads.length), class: 'empty' }, data.total === 0 && !query.toString() ? 'No registrations yet.' : 'No registrations match these filters.')),
     ),
   );
+  const hrefWith = (changes) => {
+    const p = new URLSearchParams(query);
+    for (const [k, v] of Object.entries(changes)) {
+      if (v) p.set(k, v);
+      else p.delete(k);
+    }
+    p.delete('page');
+    return `#/registrations${p.toString() ? `?${p}` : ''}`;
+  };
   const hrefFor = (n) => {
     const p = new URLSearchParams(params);
     p.set('page', String(n));
     return `#/registrations?${p}`;
   };
   const hasFilters = LIST_FILTERS.some((k) => k !== 'view' && params.get(k));
-  const s = stats.registrations;
+
+  // What the insights cover, in words.
+  const associate = params.get('bdAssociateId') ? state.staff.find((s) => String(s.id) === params.get('bdAssociateId')) : null;
+  const course = params.get('courseId') ? courses.find((c) => String(c.id) === params.get('courseId')) : null;
+  const regFrom = params.get('regFrom');
+  const regTo = params.get('regTo');
+  const periodText = periodNow && periodNow !== 'custom'
+    ? PERIODS.find((p) => p.id === periodNow).label
+    : regFrom || regTo
+      ? `Registered ${regFrom ? fmtDate(regFrom) : 'any time'} – ${regTo ? fmtDate(regTo) : 'today'}`
+      : 'All time';
+  const scopeText = associate ? associate.name : state.scope === 'all' ? 'All associates' : state.scope === 'team' ? 'Your team' : 'Your registrations';
+  const covers = [
+    scopeText,
+    periodText,
+    course && course.name,
+    params.get('status') && (params.get('status') === 'overdue' ? 'Overdue' : label('paymentStatus', params.get('status'))),
+    view && VIEWS.find((v) => v.id === view).label,
+    params.get('q') && `“${params.get('q')}”`,
+    (params.get('dueFrom') || params.get('dueTo')) && 'Due dates filtered',
+  ].filter(Boolean);
+
+  const stat = (num, lbl, sub, { href, hot } = {}) =>
+    h(href ? 'a' : 'div', { class: hot ? 'stat hot' : 'stat', href: href || null }, h('div', { class: 'num' }, num), h('div', { class: 'lbl' }, lbl), sub ? h('div', { class: 'stat-sub' }, sub) : null);
+  const received = ins.received;
+  const insightCards = h(
+    'div',
+    { class: 'stats stats-insights' },
+    stat(i.registrations, 'Registrations', `${i.fullyPaid} fully paid · ${i.partiallyPaid} part paid · ${i.slotConfirmed} slot confirmed`),
+    stat(fmtMoney(i.collected), 'Fees collected', i.committed ? `${i.collectionRate}% of ${fmtMoney(i.committed)} committed` : 'Nothing committed'),
+    stat(fmtMoney(i.outstanding), 'Outstanding', i.overdueAmount ? `${fmtMoney(i.overdueAmount)} of it overdue` : 'Nothing overdue'),
+    received
+      ? stat(fmtMoney(received.amount), 'Received in the period', `${received.payments} ${received.payments === 1 ? 'payment' : 'payments'}, ${received.from ? fmtDate(received.from) : 'start'} – ${received.to ? fmtDate(received.to) : 'today'}`)
+      : null,
+    stat(i.dueThisWeek, 'Due this week', 'Balances due in the next 7 days', { href: hrefWith({ view: 'due-week', sort: '' }), hot: i.dueThisWeek > 0 }),
+    stat(i.overdue, 'Overdue', i.overdue ? `${fmtMoney(i.overdueAmount)} past the due date` : 'None', { href: hrefWith({ view: 'overdue', sort: '' }), hot: i.overdue > 0 }),
+    can('offerLetters.view') ? stat(i.offerLetters, 'Offer letters issued', i.awaitingOfferLetter ? `${i.awaitingOfferLetter} fully paid without one yet` : 'Every fully paid student has one') : null,
+  );
+
+  // Performance per BD Associate (managers and admins, when not looking at one associate already).
+  let byAssociate = null;
+  if (state.scope !== 'own' && !associate && i.byAssociate.length) {
+    const num = (lbl, v) => h('td', { class: 'num', 'data-label': lbl }, v);
+    byAssociate = h(
+      'details',
+      { class: 'card card-flush perf-card', open: true },
+      h('summary', null, h('strong', null, 'Performance by associate'), h('span', { class: 'muted' }, ` · ${i.byAssociate.length} ${i.byAssociate.length === 1 ? 'associate' : 'associates'}, same filters`)),
+      h(
+        'div',
+        { class: 'table-wrap' },
+        h(
+          'table',
+          { class: 'stackable' },
+          h(
+            'thead',
+            null,
+            h('tr', null, h('th', null, 'Associate'), ['Registrations', 'Fully paid', 'Committed', 'Collected', 'Outstanding', 'Overdue', 'Collected %'].map((t) => h('th', { class: 'num' }, t))),
+          ),
+          h(
+            'tbody',
+            null,
+            i.byAssociate.map((r) =>
+              h(
+                'tr',
+                null,
+                h('td', { class: 'primary', 'data-label': 'Associate' }, r.associate ? h('a', { href: hrefWith({ bdAssociateId: String(r.associate.id) }) }, r.associate.name) : h('span', { class: 'muted' }, 'No associate')),
+                num('Registrations', r.registrations),
+                num('Fully paid', r.fullyPaid),
+                num('Committed', fmtMoney(r.committed)),
+                num('Collected', fmtMoney(r.collected)),
+                num('Outstanding', fmtMoney(r.outstanding)),
+                num('Overdue', r.overdue ? h('span', { class: 'fu-overdue' }, `${r.overdue} · ${fmtMoney(r.overdueAmount)}`) : '0'),
+                num('Collected %', `${r.collectionRate}%`),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   mount(
     'Registrations',
     h(
@@ -142,15 +377,7 @@ export async function viewRegistrations(params, stale) {
       can('registrations.export') ? h('a', { class: 'btn', href: `/api/registrations/export?${query}`, download: '' }, 'Export CSV') : null,
       can('registrations.create') ? h('a', { class: 'btn btn-primary', href: '#/registrations/new' }, '+ Register a student') : null,
     ),
-    h(
-      'div',
-      { class: 'stats' },
-      h('div', { class: 'stat' }, h('div', { class: 'num' }, fmtMoney(s.collected)), h('div', { class: 'lbl' }, 'Collected')),
-      h('div', { class: 'stat' }, h('div', { class: 'num' }, fmtMoney(s.outstanding)), h('div', { class: 'lbl' }, 'Outstanding')),
-      h('a', { class: s.dueThisWeek ? 'stat hot' : 'stat', href: '#/registrations?view=due-week' }, h('div', { class: 'num' }, s.dueThisWeek), h('div', { class: 'lbl' }, 'Due this week')),
-      h('a', { class: s.overdue ? 'stat hot' : 'stat', href: '#/registrations?view=overdue' }, h('div', { class: 'num' }, s.overdue), h('div', { class: 'lbl' }, 'Overdue')),
-    ),
-    stats.openRegistrationFlags
+    stats && stats.openRegistrationFlags
       ? h(
           'a',
           { class: 'notice notice-link', href: '#/registrations/flags' },
@@ -158,8 +385,11 @@ export async function viewRegistrations(params, stale) {
           ' Review →',
         )
       : null,
-    tabs,
     form,
+    h('p', { class: 'insights-for muted small' }, h('strong', null, 'Insights for: '), covers.join(' · ')),
+    insightCards,
+    byAssociate,
+    tabs,
     h('div', { class: 'card card-flush' }, h('div', { class: 'table-wrap' }, table)),
     pagerEl(data, hrefFor),
   );
@@ -265,10 +495,9 @@ export async function viewRegistrationForm(stale) {
   };
   const mayAssign = can('registrations.edit');
   const bdSelect = mayAssign
-    ? selectEl('enrollment.bdAssociateId', state.staff.filter((s) => s.active).map((s) => ({ id: s.id, label: s.name })), state.me.id)
+    ? selectEl('enrollment.bdAssociateId', staffOptions(state.me.id), state.me.id)
     : null;
   const balanceOut = h('output', { class: 'readonly', 'aria-live': 'polite' }, '—');
-  const sendOffer = h('input', { type: 'checkbox', checked: true, id: newId() });
 
   const amount = (input) => {
     const v = input.value.replace(/[,\s₹]/g, '');
@@ -394,9 +623,7 @@ export async function viewRegistrationForm(stale) {
           : h('div', { class: 'field' }, h('span', { class: 'label' }, 'BD Associate'), h('output', { class: 'readonly' }, state.me.name)),
         field('Remarks', en.remarks, { full: true }),
       ),
-      can('offerLetters.create') && meta.emailEnabled
-        ? h('label', { class: 'check', for: sendOffer.id }, sendOffer, ' Email the offer letter to the student now (it is generated either way)')
-        : null,
+      can('offerLetters.view') ? h('p', { class: 'muted small' }, 'The offer letter is issued from the student’s profile once the fee is fully paid.') : null,
     ),
     h('p', { class: 'form-error', role: 'alert' }),
     h('div', { class: 'form-actions' }, submit, h('a', { class: 'btn btn-ghost', href: '#/registrations' }, 'Cancel')),
@@ -417,20 +644,11 @@ export async function viewRegistrationForm(stale) {
         ...Object.fromEntries(Object.entries(en).map(([k, input]) => [k, value(input)])),
         bdAssociateId: bdSelect ? Number(bdSelect.value) : null,
       },
-      sendOfferLetter: can('offerLetters.create') && meta.emailEnabled && sendOffer.checked,
     };
     submit.disabled = true;
     try {
       const r = await api('POST', '/api/registrations', body);
-      const letter = r.offerLetter;
-      toast(
-        letter && letter.status === 'sent'
-          ? `Registered. Offer letter ${letter.offerLetterId} emailed.`
-          : letter && letter.status === 'failed'
-            ? `Registered. The offer letter could not be emailed: ${letter.emailError}`
-            : 'Registered. The offer letter is ready.',
-        Boolean(letter && letter.status === 'failed'),
-      );
+      toast(r.registration.balance > 0 ? 'Registered. The offer letter can be sent once the balance is paid.' : 'Registered. Fully paid: send the offer letter from the profile.');
       go(`#/registrations/students/${r.registration.student.id}?e=${r.registration.id}`);
     } catch (err) {
       if (err.status === 409 && err.data.error === 'student_exists') {
@@ -482,7 +700,7 @@ function enrollmentCard(e, { reload, focus }) {
       fee: h('input', { name: 'fee', inputmode: 'decimal', value: String(e.fee) }),
       balanceDueDate: h('input', { name: 'balanceDueDate', type: 'date', value: e.balanceDueDate || '' }),
       batchStartDate: h('input', { name: 'batchStartDate', type: 'date', value: e.batchStartDate }),
-      bdAssociateId: selectEl('bdAssociateId', state.staff.filter((s) => s.active || (e.bdAssociate && s.id === e.bdAssociate.id)).map((s) => ({ id: s.id, label: s.name })), e.bdAssociate ? e.bdAssociate.id : ''),
+      bdAssociateId: selectEl('bdAssociateId', staffOptions(e.bdAssociate && e.bdAssociate.id), e.bdAssociate ? e.bdAssociate.id : ''),
       remarks: h('textarea', { name: 'remarks', rows: '2', maxlength: '2000' }, e.remarks || ''),
     };
     editForm = h(
@@ -639,36 +857,30 @@ function enrollmentCard(e, { reload, focus }) {
       });
       buttons.push(preview);
     }
+    // Offer letters are issued only once the fee is fully paid (the server checks too).
+    const fullyPaid = e.balance <= 0;
     if (can('offerLetters.create')) {
-      const emailOn = state.meta.emailEnabled;
+      const issue = async (mode) => {
+        const r = await offerLetterDialog(e, letter, mode);
+        if (!r) return;
+        if (r.status === 'sent') toast(`Offer letter ${r.offerLetterId} emailed`);
+        else if (r.status === 'failed') toast(`Offer letter ${r.offerLetterId} is ready, but the email failed: ${r.emailError}`, true);
+        else toast(`Offer letter ${r.offerLetterId} is ready to download`);
+        reload(e.id);
+      };
+      const notYet = fullyPaid ? null : `Available once the fee is fully paid (${fmtMoney(e.balance)} still due).`;
       const send = h(
         'button',
-        { class: 'btn btn-primary', type: 'button', disabled: !emailOn, title: emailOn ? null : 'Email is not configured on the server: download the PDF and send it yourself.' },
-        letter && letter.status === 'sent' ? 'Email again' : 'Email to student',
+        { class: 'btn btn-primary', type: 'button', disabled: !fullyPaid, title: notYet },
+        letter && letter.status === 'sent' ? 'Send again' : 'Send offer letter',
       );
-      send.addEventListener('click', async () => {
-        send.disabled = true;
-        try {
-          const r = await api('POST', `/api/registrations/${e.id}/offer-letter/send`);
-          toast(r.offerLetter.status === 'sent' ? 'Offer letter emailed' : `Not sent: ${r.offerLetter.emailError}`, r.offerLetter.status !== 'sent');
-          reload(e.id);
-        } catch (err) {
-          toast(errorText(err), true);
-          send.disabled = false;
-        }
-      });
-      const regen = h('button', { class: 'btn', type: 'button' }, letter ? 'Regenerate' : 'Generate');
-      regen.addEventListener('click', async () => {
-        if (letter && !window.confirm('Regenerate the offer letter with the current details and template? It keeps its ID; the date becomes today.')) return;
-        try {
-          await api('POST', `/api/registrations/${e.id}/offer-letter/generate`);
-          toast('Offer letter generated');
-          reload(e.id);
-        } catch (err) {
-          toast(errorText(err), true);
-        }
-      });
-      buttons.push(send, regen);
+      send.addEventListener('click', () => issue('send'));
+      buttons.push(send);
+      if (letter) {
+        const regen = h('button', { class: 'btn', type: 'button', disabled: !fullyPaid, title: notYet }, 'Regenerate');
+        regen.addEventListener('click', () => issue('regenerate'));
+        buttons.push(regen);
+      }
     }
     const events = letter
       ? h(
@@ -686,9 +898,19 @@ function enrollmentCard(e, { reload, focus }) {
         'Offer letter ',
         letter ? h('span', { class: 'mono' }, letter.offerLetterId) : null,
         ' ',
-        letter ? offerBadge(letter.status) : h('span', { class: 'muted' }, 'not generated'),
+        letter ? offerBadge(letter.status) : h('span', { class: 'muted' }, 'not issued yet'),
       ),
-      letter ? h('p', { class: 'muted small' }, `${letter.template ? `Template "${letter.template.name}"` : 'Built-in letterhead'} · dated ${fmtDate(letter.offerDate)}${letter.sentAt ? ` · last emailed ${fmtDateTime(letter.sentAt)}` : ''}`) : null,
+      letter
+        ? h('p', { class: 'muted small' }, [
+            letter.template ? `Template "${letter.template.name}"` : 'Built-in letterhead',
+            `dated ${fmtDate(letter.offerDate)}`,
+            letter.internshipStartDate ? `internship starts ${fmtDate(letter.internshipStartDate)}` : null,
+            letter.sentAt ? `last emailed ${fmtDateTime(letter.sentAt)}` : null,
+          ].filter(Boolean).join(' · '))
+        : null,
+      fullyPaid
+        ? null
+        : h('p', { class: 'notice' }, `The offer letter is issued once the fee is fully paid. ${fmtMoney(e.balance)} is still due${e.balanceDueDate ? ` (by ${fmtDate(e.balanceDueDate)})` : ''}.`),
       letter && letter.status === 'failed' ? h('p', { class: 'error-text' }, `Email failed: ${letter.emailError}`) : null,
       h('div', { class: 'row' }, buttons),
       frame,

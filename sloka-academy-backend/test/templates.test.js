@@ -58,20 +58,19 @@ describe('certificate templates', () => {
     assert.ok(validateLayout(hidden).errors['name.show']);
   });
 
-  test('upload: PDF and PNG accepted (page size from the file); junk, tiny images and counsellors refused', async () => {
+  test('upload: PDF accepted (page size from the file); images, junk and counsellors refused', async () => {
     const pdf = await upload('A4 landscape', await pdfOfSize(842, 595), 'application/pdf');
     assert.equal(pdf.status, 201, JSON.stringify(pdf.data));
     assert.equal(pdf.data.template.fileType, 'pdf');
     assert.equal(Math.round(pdf.data.template.pageWidth), 842);
     assert.equal(pdf.data.template.isDefault, false);
 
-    const png = await upload('Logo artwork', LOGO, 'image/png');
-    assert.equal(png.status, 201, JSON.stringify(png.data));
-    assert.equal(png.data.template.fileType, 'png');
-
-    const tooSmall = await upload('Tiny', TINY_PNG, 'image/png');
-    assert.equal(tooSmall.status, 400);
-    assert.match(tooSmall.data.fields.file, /too small/);
+    // Images have no text to find placeholders in.
+    for (const image of [LOGO, TINY_PNG]) {
+      const png = await upload('Logo artwork', image, 'image/png');
+      assert.equal(png.status, 400);
+      assert.match(png.data.fields.file, /Images cannot be searched for placeholders/);
+    }
 
     const blank = await PDFDocument.create();
     blank.addPage([842, 595]);

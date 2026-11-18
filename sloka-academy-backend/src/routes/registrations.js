@@ -5,7 +5,7 @@ const C = require('../constants');
 const { parseRegistrationFilters, RegistrationError } = require('../registrationRepo');
 const { validateRegistrationStudent, validateEnrollment, validatePayment, normalizePhone, asObject } = require('../validation');
 const { toCsv, nationalPhone } = require('../csv');
-const { localDate, validationError, HttpError } = require('../util');
+const { localDate, isValidDateString, validationError, HttpError } = require('../util');
 
 const hasErrors = (o) => Object.keys(o).length > 0;
 
@@ -32,14 +32,38 @@ function registrationsRouter({ db, auth, registrations, offerLetters }) {
     return e;
   }
 
-  async function filtersOrThrow(req) {
-    const f = parseRegistrationFilters(req.query, { scopeIds: await auth.scopeUserIds(req.user) });
+  async function filtersOrThrow(req, query = req.query) {
+    const f = parseRegistrationFilters(query, { scopeIds: await auth.scopeUserIds(req.user) });
     if (hasErrors(f.errors)) throw validationError(f.errors);
     return f;
   }
 
   router.get('/', may('registrations.view'), async (req, res) => {
     res.json(await registrations.list(await filtersOrThrow(req)));
+  });
+
+  /**
+   * Insights for the registrations the list's filters select (same query string, same data scope): totals,
+   * payment status counts, and per BD Associate. views: the counts of the All / Due this week / Overdue tabs
+   * under the other filters. received: payments received between regFrom and regTo (when either is set) on the
+   * registrations the other filters select, whenever they were registered.
+   */
+  router.get('/insights', may('registrations.view'), async (req, res) => {
+    const f = await filtersOrThrow(req);
+    const { view, ...withoutView } = req.query;
+    const all = await filtersOrThrow(req, withoutView);
+    const { regFrom, regTo, ...withoutPeriod } = req.query;
+    const period = Boolean((typeof regFrom === 'string' && regFrom) || (typeof regTo === 'string' && regTo)); // valid: f has checked them
+    const [insights, views, received] = await Promise.all([
+      registrations.insights(f),
+      registrations.insights(all),
+      period ? filtersOrThrow(req, withoutPeriod).then((g) => registrations.received(g, regFrom || null, regTo || null)) : null,
+    ]);
+    res.json({
+      insights,
+      views: { all: views.registrations, dueThisWeek: views.dueThisWeek, overdue: views.overdue },
+      received: received && { ...received, from: regFrom || null, to: regTo || null },
+    });
   });
 
   router.get('/export', may('registrations.export'), async (req, res) => {
@@ -69,8 +93,8 @@ function registrationsRouter({ db, auth, registrations, offerLetters }) {
 
   /**
    * Register a student. { studentId? (the existing student the associate confirmed), student: {...},
-   * enrollment: {...}, sendOfferLetter? }. 409 student_exists (with the matches) if the mobile number or email
-   * is already in the student master and no studentId was given.
+   * enrollment: {...} }. 409 student_exists (with the matches) if the mobile number or email is already in the
+   * student master and no studentId was given. The offer letter follows once the fee is fully paid.
    */
   router.post('/', may('registrations.create'), async (req, res) => {
     const body = asObject(req.body);
@@ -99,9 +123,7 @@ function registrationsRouter({ db, auth, registrations, offerLetters }) {
       if (!(err instanceof RegistrationError) || err.body) throw err;
       throw validationError(Object.fromEntries(Object.entries(err.fields).map(([k, v]) => [k === 'studentId' ? k : `enrollment.${k}`, v])));
     }
-    let offerLetter = await offerLetters.get(id);
-    if (body.sendOfferLetter === true && req.user.permissions.has('offerLetters.create') && offerLetters.emailEnabled()) offerLetter = await offerLetters.send(id, req.user.id);
-    res.status(201).json({ registration: await registrations.get(id), offerLetter });
+    res.status(201).json({ registration: await registrations.get(id) });
   });
 
   // ---- conflicts the associates flagged ("not the same student")
@@ -217,17 +239,35 @@ function registrationsRouter({ db, auth, registrations, offerLetters }) {
     res.send(letter.pdf);
   });
 
-  // Generate the letter (if there is none) or regenerate it with the current details and template.
-  router.post('/:id/offer-letter/generate', may('offerLetters.create'), async (req, res) => {
+  // Offer letters are issued only once the fee is fully paid, and always with the internship start date the
+  // associate enters ({ startDate: 'YYYY-MM-DD' }, not before the registration date).
+  async function issuable(req) {
     const id = parseId(req.params.id);
-    await load(req, id);
-    res.json({ offerLetter: await offerLetters.generate(id, req.user.id) });
+    const registration = await load(req, id);
+    if (registration.balance > 0) {
+      throw new HttpError(409, {
+        error: 'balance_due',
+        message: `The offer letter can be issued once the fee is fully paid. ₹${registration.balance.toLocaleString('en-IN')} is still due.`,
+      });
+    }
+    const raw = req.body && typeof req.body.startDate === 'string' ? req.body.startDate.trim() : '';
+    if (!raw) throw validationError({ startDate: 'Enter the internship start date.' });
+    if (!isValidDateString(raw)) throw validationError({ startDate: 'Enter a valid date.' });
+    if (raw < registration.registrationDate) throw validationError({ startDate: 'The internship cannot start before the registration date.' });
+    return { id, startDate: raw };
+  }
+
+  // Generate the letter, or regenerate it (same ID) with the current details, template and the date entered.
+  router.post('/:id/offer-letter/generate', may('offerLetters.create'), async (req, res) => {
+    const { id, startDate } = await issuable(req);
+    res.json({ offerLetter: await offerLetters.generate(id, req.user.id, { startDate }) });
   });
 
+  // Email the letter to the student; it is generated first if there is none or the start date changed.
   router.post('/:id/offer-letter/send', may('offerLetters.create'), async (req, res) => {
-    const id = parseId(req.params.id);
-    await load(req, id);
-    if (!(await offerLetters.get(id))) await offerLetters.generate(id, req.user.id);
+    const { id, startDate } = await issuable(req);
+    const letter = await offerLetters.get(id);
+    if (!letter || letter.internshipStartDate !== startDate) await offerLetters.generate(id, req.user.id, { startDate });
     res.json({ offerLetter: await offerLetters.send(id, req.user.id) });
   });
 

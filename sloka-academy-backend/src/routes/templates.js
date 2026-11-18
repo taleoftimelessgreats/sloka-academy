@@ -8,6 +8,8 @@ const {
   DEFAULT_LAYOUT,
   validateLayout,
   inspectTemplateFile,
+  sourceTypeOf,
+  mappingPending,
   TemplateFileError,
   PLACEHOLDER_FIELDS,
   initialLayout,
@@ -17,7 +19,14 @@ const { renderCertificatePdf } = require('../certificatePdf');
 const { validateTemplateName } = require('../validation');
 const { localDate, validationError, HttpError } = require('../util');
 
-const UPLOAD_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+// What the browser may label an upload. Only PDFs are accepted (the portal converts Word and PowerPoint files
+// first); the other types are read so that the file's own bytes can say why it was refused (certificateTemplates.js).
+const UPLOAD_TYPES = [
+  'application/pdf', 'image/png', 'image/jpeg', 'image/webp',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/octet-stream',
+];
 const MIME = { pdf: 'application/pdf', png: 'image/png', jpeg: 'image/jpeg' };
 const hasErrors = (o) => Object.keys(o).length > 0;
 
@@ -27,8 +36,9 @@ function parseId(raw) {
 }
 
 /**
- * Certificate designs: uploaded templates (PDF or image), where each detail is printed on them, and the
- * placeholders found in a PDF's text with the detail each one is replaced by.
+ * Certificate designs: uploaded templates (PDF; Word and PowerPoint files are converted to PDF by the portal), where
+ * each detail is printed on them, and the placeholders found in a PDF's text with the detail each one is replaced
+ * by. A design whose placeholders have not been mapped yet cannot be the default or be given to a session.
  */
 function templatesRouter({ config, templateRepo, auth, audit }) {
   const router = express.Router();
@@ -70,11 +80,12 @@ function templatesRouter({ config, templateRepo, auth, audit }) {
     });
   });
 
-  // Upload: raw file body (PDF, PNG or JPEG); the name travels in the query string.
+  // Upload: the raw PDF as the body; the name (and `source`: docx | pptx when the portal converted it) travel in the
+  // query string. Placeholders found are suggested a detail each; staff confirm the mapping before it is used.
   router.post('/', may('create'), upload, async (req, res) => {
     const { values, errors } = validateTemplateName(typeof req.query.name === 'string' ? req.query.name : '');
     if (hasErrors(errors)) throw validationError(errors);
-    if (!Buffer.isBuffer(req.body) || !req.body.length) throw validationError({ file: 'Choose a PDF, PNG or JPEG file.' });
+    if (!Buffer.isBuffer(req.body) || !req.body.length) throw validationError({ file: 'Choose a PDF, Word or PowerPoint file.' });
     let info;
     try {
       info = await inspectTemplateFile(req.body);
@@ -83,10 +94,12 @@ function templatesRouter({ config, templateRepo, auth, audit }) {
       throw err;
     }
     const { placeholders, ...file } = info;
-    const template = await templateRepo.create({ name: values.name, file: req.body, ...file, layout: initialLayout(info) }, req.user.id);
+    const sourceType = sourceTypeOf(req.query.source);
+    const template = await templateRepo.create({ name: values.name, file: req.body, ...file, sourceType, layout: initialLayout(info) }, req.user.id);
+    const kind = (sourceType || file.fileType).toUpperCase();
     await audit.log({
       actorId: req.user.id, entity: 'certificate_template', entityId: template.id, action: 'upload',
-      summary: `Uploaded certificate design "${template.name}" (${file.fileType.toUpperCase()}, ${placeholders.length} placeholder${placeholders.length === 1 ? '' : 's'} found)`,
+      summary: `Uploaded certificate design "${template.name}" (${kind}, ${placeholders.length} placeholder${placeholders.length === 1 ? '' : 's'} found)`,
     });
     res.status(201).json({ template, placeholdersFound: placeholders.length });
   });
@@ -98,6 +111,7 @@ function templatesRouter({ config, templateRepo, auth, audit }) {
     else {
       const t = await load(parseId(raw));
       if (t.archived) throw validationError({ id: 'Restore this template before making it the default.' });
+      if (mappingPending(t.layout)) throw validationError({ id: 'Map the placeholders found in this design before making it the default.' });
       await templateRepo.setDefault(t.id);
     }
     res.json(await listing());

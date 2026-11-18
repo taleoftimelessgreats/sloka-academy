@@ -357,7 +357,7 @@ label.check input[type="checkbox"] { margin-top: 2px; }
 .tabs .tab:hover { color: var(--text); }
 .tabs .tab.active { color: var(--text); border-bottom-color: var(--accent); }
 .tabs .count { font-size: 11px; padding: 0 6px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
-.filters.filters-registrations { grid-template-columns: 2fr repeat(3, minmax(0, 1fr)); }
+.filters.filters-registrations { grid-template-columns: 2fr repeat(4, minmax(0, 1fr)); }
 .date-filter { display: flex; flex-direction: column; gap: 2px; font-size: 11px; color: var(--muted); }
 .date-row { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 @media (max-width: 700px) { .date-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
@@ -427,3 +427,21 @@ textarea.mono-text { font-family: var(--mono); font-size: 13px; line-height: 1.5
 }
 details.fold > summary { cursor: pointer; color: var(--muted); padding-top: 0; padding-bottom: 12px; }
 details.fold > summary:hover { color: var(--text); }
+
+/* registrations: insights for the filtered list, and performance per associate */
+.insights-for { margin: 4px 0 8px; }
+.stats.stats-insights { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.stat .stat-sub { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.35; }
+.perf-card { margin-bottom: 16px; }
+.perf-card > summary { cursor: pointer; padding: 14px 16px; }
+@media (max-width: 860px) {
+  .stats.stats-insights { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* the placeholder mapping dialog */
+dialog.modal.modal-wide { width: min(880px, calc(100vw - 32px)); }
+dialog.modal tr.unmapped td { opacity: 1; }
+dialog.modal tr.unmapped td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
+
+/* the hidden frame that converts Word and PowerPoint templates to PDF (settings.js, officeToPdf) */
+.converter-frame { position: fixed; left: -20000px; top: 0; width: 1600px; height: 1200px; border: 0; }

@@ -13,7 +13,7 @@ import { viewRoles } from './roles.js';
 import { viewOfferTemplateEditor, viewSettings, viewTemplateEditor } from './settings.js';
 import { viewStudentDetail, viewStudents, viewVerifications } from './students.js';
 
-// [path pattern, permissions (any one will do), view(match, params, stale)]. The API checks permissions again.
+// [path pattern, permissions (any one will do; 'a+b' needs both), view(match, params, stale)]. The API checks permissions again.
 const ROUTES = [
   [/^\/$/, null, (m, p, stale) => viewOverview(stale)],
   [/^\/registrations$/, ['registrations.view'], (m, p, stale) => viewRegistrations(p, stale)],
@@ -27,8 +27,9 @@ const ROUTES = [
   [/^\/sessions\/new$/, ['sessions.create'], (m, p, stale) => viewSessionForm(null, stale)],
   [/^\/sessions\/(\d+)\/edit$/, ['sessions.edit'], (m, p, stale) => viewSessionForm(Number(m[1]), stale)],
   [/^\/sessions\/(\d+)$/, ['sessions.view'], (m, p, stale) => viewSessionDetail(Number(m[1]), p, stale)],
-  [/^\/certificates$/, ['certificates.view'], (m, p, stale) => viewCertificates(p, stale)],
-  [/^\/certificates\/(\d+)$/, ['certificates.view'], (m, p, stale) => viewCertificateDetail(Number(m[1]), stale)],
+  // Certificates list participants: their personal data needs Participant (student) data → View too.
+  [/^\/certificates$/, ['certificates.view+students.view'], (m, p, stale) => viewCertificates(p, stale)],
+  [/^\/certificates\/(\d+)$/, ['certificates.view+students.view'], (m, p, stale) => viewCertificateDetail(Number(m[1]), stale)],
   [/^\/students$/, ['students.view'], (m, p, stale) => viewStudents(p, stale)],
   [/^\/students\/verifications$/, ['students.view'], (m, p, stale) => viewVerifications(p, stale)],
   [/^\/students\/(\d+)$/, ['students.view'], (m, p, stale) => viewStudentDetail(Number(m[1]), stale)],

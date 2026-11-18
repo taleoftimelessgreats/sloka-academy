@@ -49,9 +49,14 @@ function certificatesCsv(res, rows, filename) {
   res.send(toCsv(header, data));
 }
 
-/** Staff: certificate registrations (permissions certificates.*; viewing includes downloading and re-sending). */
+/**
+ * Staff: certificate registrations (permissions certificates.*; viewing includes downloading and re-sending).
+ * They are the participants' records, so every route also needs Participant (student) data → View; the friends a
+ * participant referred are enquiries, shown only with Enquiry data → View.
+ */
 function certificatesRouter({ config, certRepo, delivery, auth, verifications, audit }) {
   const router = express.Router();
+  router.use(auth.requirePermission('students.view'));
   const may = (action) => auth.requirePermission(`certificates.${action}`);
   const canEmail = () => delivery.enabled();
 
@@ -60,12 +65,12 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications, a
     if (!r) throw new HttpError(404, { error: 'not_found' });
     return r;
   }
-  const detail = async (id) => {
+  const detail = async (req, id) => {
     const [certificate, events, verification, referrals] = await Promise.all([
       load(id),
       certRepo.events(id),
       verifications.forRecord({ registrationId: id }),
-      certRepo.referrals(id),
+      req.user.permissions.has('enquiries.view') ? certRepo.referrals(id) : null,
     ]);
     return { certificate, events, verification, referrals, verifyUrl: verifyLink(config.certVerifyUrl, certificate.certificateId), emailEnabled: canEmail() };
   };
@@ -95,7 +100,7 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications, a
   });
 
   router.get('/:id', may('view'), async (req, res) => {
-    res.json(await detail(parseId(req.params.id)));
+    res.json(await detail(req, parseId(req.params.id)));
   });
 
   // Staff copy of the PDF (does not count as a student download). Revoked ones are watermarked.
@@ -115,7 +120,7 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications, a
     if (!canEmail()) return res.status(400).json({ error: 'email_not_configured', message: 'Email is not configured on the server.' });
     if (r.status === 'revoked') return res.status(409).json({ error: 'revoked', message: 'Reinstate the certificate before sending it.' });
     const result = await delivery.deliver(id, { actorId: req.user.id, resent: true });
-    return res.json({ ...(await detail(id)), result });
+    return res.json({ ...(await detail(req, id)), result });
   });
 
   // Correct the printed name and/or the email address the certificate is sent to.
@@ -126,7 +131,7 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications, a
     if (hasErrors(errors)) throw validationError(errors);
     const result = await certRepo.correctDetails(id, values, req.user.id);
     if (result === 'email_taken') throw validationError({ email: 'Another registration for this session already uses this email.' });
-    res.json(await detail(id));
+    res.json(await detail(req, id));
   });
 
   router.post('/:id/revoke', may('edit'), async (req, res) => {
@@ -135,14 +140,14 @@ function certificatesRouter({ config, certRepo, delivery, auth, verifications, a
     const { values, errors } = validateRevoke(req.body);
     if (hasErrors(errors)) throw validationError(errors);
     await certRepo.revoke(id, values.reason, req.user.id);
-    res.json(await detail(id));
+    res.json(await detail(req, id));
   });
 
   router.post('/:id/reinstate', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
     await load(id);
     await certRepo.reinstate(id, req.user.id);
-    res.json(await detail(id));
+    res.json(await detail(req, id));
   });
 
   // Permanent erasure on request: registration + its activity log.

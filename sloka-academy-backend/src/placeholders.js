@@ -65,58 +65,82 @@ function fontOf(family, { bold = false, italic = false } = {}) {
 }
 
 /**
- * The colour around each box on a rendering of the page ({ page, x, y, width, size } in PDF points), as #rrggbb;
- * null where the page cannot be rendered (no canvas package on this server).
+ * Colours on a rendering of the page, for each item { page, box, own } (boxes: { x, y, width, size } in PDF points,
+ * y the baseline): `background`, the colour around `box` (the placeholder, or its whole line), and the colour of the
+ * letters inside `own` (`text`, the placeholder's) and inside `box` (`lineText`, the line's words). #rrggbb, or null
+ * where the page cannot be rendered (no canvas package on this server) or there are no letters to see.
  */
-async function sampleBackgrounds(pdf, boxes) {
+async function sampleColours(pdf, items) {
+  const none = () => ({ background: null, text: null, lineText: null });
   let createCanvas;
   try {
     ({ createCanvas } = require('@napi-rs/canvas'));
   } catch {
-    return boxes.map(() => null);
+    return items.map(none);
   }
-  const out = boxes.map(() => null);
-  const pages = [...new Set(boxes.map((b) => b.page))];
+  const out = items.map(none);
+  const pages = [...new Set(items.map((it) => it.page))];
   for (const p of pages) {
     try {
       const page = await pdf.getPage(p + 1);
-      const viewport = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: 2 });
       const canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height));
       const ctx = canvas.getContext('2d');
       await page.render({ canvasContext: ctx, viewport, canvas }).promise;
       const { data, width: cw, height: ch } = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      boxes.forEach((b, i) => {
-        if (b.page !== p) return;
-        // A band just outside the box (where the placeholder's own letters are not), most common colour wins.
-        const [x1, y1] = viewport.convertToViewportPoint(b.x - 4, b.y + b.size * 1.1);
-        const [x2, y2] = viewport.convertToViewportPoint(b.x + b.width + 4, b.y - b.size * 0.45);
-        const counts = new Map(); // similar colours together: { n, r, g, b } sums
-        const take = (x, y) => {
-          if (x < 0 || y < 0 || x >= cw || y >= ch) return;
-          const k = ((y | 0) * cw + (x | 0)) * 4;
-          const key = (data[k] & 0xf8) * 65536 + (data[k + 1] & 0xf8) * 256 + (data[k + 2] & 0xf8);
-          const c = counts.get(key) || { n: 0, r: 0, g: 0, b: 0 };
-          c.n += 1;
-          c.r += data[k];
-          c.g += data[k + 1];
-          c.b += data[k + 2];
-          counts.set(key, c);
-        };
-        for (let x = Math.floor(x1); x <= x2; x += 2) {
-          take(x, y1 - 2);
-          take(x, y2 + 2);
-        }
-        for (let y = Math.floor(y1); y <= y2; y += 2) {
-          take(x1 - 2, y);
-          take(x2 + 2, y);
-        }
-        if (!counts.size) return;
+      // Similar colours count together (5 bits a channel); the most common wins.
+      const tally = () => new Map();
+      const take = (counts, x, y, keep = () => true) => {
+        if (x < 0 || y < 0 || x >= cw || y >= ch) return;
+        const k = ((y | 0) * cw + (x | 0)) * 4;
+        if (!keep(data[k], data[k + 1], data[k + 2])) return;
+        const key = (data[k] & 0xf8) * 65536 + (data[k + 1] & 0xf8) * 256 + (data[k + 2] & 0xf8);
+        const c = counts.get(key) || { n: 0, r: 0, g: 0, b: 0 };
+        c.n += 1;
+        c.r += data[k];
+        c.g += data[k + 1];
+        c.b += data[k + 2];
+        counts.set(key, c);
+      };
+      const winner = (counts) => {
+        if (!counts.size) return null;
         const best = [...counts.values()].sort((a, c) => c.n - a.n)[0];
         const hex = (sum) => Math.round(sum / best.n).toString(16).padStart(2, '0');
-        out[i] = `#${hex(best.r)}${hex(best.g)}${hex(best.b)}`;
+        return { hex: `#${hex(best.r)}${hex(best.g)}${hex(best.b)}`, r: best.r / best.n, g: best.g / best.n, b: best.b / best.n, n: best.n };
+      };
+      items.forEach((it, i) => {
+        if (it.page !== p) return;
+        const b = it.box;
+        // The background: a band just outside the box, where the letters are not.
+        const [x1, y1] = viewport.convertToViewportPoint(b.x - 4, b.y + b.size * 1.1);
+        const [x2, y2] = viewport.convertToViewportPoint(b.x + b.width + 4, b.y - b.size * 0.45);
+        const around = tally();
+        for (let x = Math.floor(x1); x <= x2; x += 2) {
+          take(around, x, y1 - 2);
+          take(around, x, y2 + 2);
+        }
+        for (let y = Math.floor(y1); y <= y2; y += 2) {
+          take(around, x1 - 2, y);
+          take(around, x2 + 2, y);
+        }
+        const bg = winner(around);
+        if (!bg) return;
+        out[i].background = bg.hex;
+        // The letters: inside a box, the most common colour clearly unlike the background.
+        const far = (r, g, bb) => Math.hypot(r - bg.r, g - bg.g, bb - bg.b) > 90;
+        const letters = (box) => {
+          const [lx1, ly1] = viewport.convertToViewportPoint(box.x, box.y + box.size * 0.75);
+          const [lx2, ly2] = viewport.convertToViewportPoint(box.x + box.width, box.y - box.size * 0.05);
+          const inside = tally();
+          for (let y = Math.floor(ly1); y <= ly2; y += 1) for (let x = Math.floor(lx1); x <= lx2; x += 1) take(inside, x, y, far);
+          const w = winner(inside);
+          return w && w.n >= 4 ? w.hex : null;
+        };
+        out[i].text = letters(it.own);
+        out[i].lineText = it.own === b ? out[i].text : letters(b);
       });
     } catch {
-      /* this page could not be rendered: covers stay white */
+      /* this page could not be rendered: covers stay white, letters the default colour */
     }
   }
   return out;
@@ -152,23 +176,37 @@ async function extractPlaceholders(bytes, { maxPages = 1 } = {}) {
       for (const item of content.items) {
         // Spaces between blocks come as items of their own (as wide as the gap): the gaps are measured instead.
         if (typeof item.str !== 'string' || !item.str.trim()) continue;
-        const [a, b, , , x, y] = item.transform;
-        const size = Math.hypot(a, b) || item.height || 10;
+        const [a, b, c, d, x, y] = item.transform;
+        // The vertical scale is the font size (text squeezed or stretched across keeps its height).
+        const size = Math.hypot(c, d) || Math.hypot(a, b) || item.height || 10;
         let line = lines.find((l) => Math.abs(l.y - y) < size * 0.3);
         if (!line) lines.push((line = { y, runs: [] }));
         line.runs.push({ str: item.str, x, y, width: item.width, size, fontName: item.fontName, family: content.styles[item.fontName]?.fontFamily || '' });
       }
-      // Text far apart on the same baseline ("Ref: ...        Date: ...") is separate blocks, not one sentence.
+      // Text far apart on the same baseline ("Ref: ...        Date: ...") is separate blocks, not one sentence. Each
+      // block knows whether it is alone on its baseline and where the next one starts (its values must stop there).
       const blocks = [];
       for (const line of lines) {
         line.runs.sort((r1, r2) => r1.x - r2.x);
+        const own = [];
         let block = null;
         for (const run of line.runs) {
           const prev = block && block.runs[block.runs.length - 1];
-          if (!prev || run.x - (prev.x + prev.width) > Math.max(prev.size, run.size) * 2) blocks.push((block = { y: line.y, runs: [] }));
+          if (!prev || run.x - (prev.x + prev.width) > Math.max(prev.size, run.size) * 2) own.push((block = { y: line.y, runs: [] }));
           block.runs.push(run);
         }
+        own.forEach((b, i) => {
+          b.alone = own.length === 1;
+          b.next = own[i + 1] ? own[i + 1].runs[0].x : null;
+        });
+        blocks.push(...own);
       }
+      // Left edges that several blocks start at (a margin, a table column): text there is left-aligned, not centred.
+      const starts = blocks.map((b) => b.runs[0].x);
+      const sharedEdge = (x) => starts.filter((sx) => Math.abs(sx - x) < 3).length >= 2;
+      // The right edge of the text on the page: values set from a left-aligned position stop there.
+      const textRight = Math.max(...blocks.map((b) => b.runs[b.runs.length - 1].x + b.runs[b.runs.length - 1].width));
+      const centredOnPage = (left, width, share = 0.06) => Math.abs(left + width / 2 - pageWidth / 2) < pageWidth * share;
       // Whether a font is bold or italic: pdf.js knows once the page's fonts are loaded (with its operators).
       let fontsLoaded = false;
       const fontStyle = async (id) => {
@@ -196,6 +234,16 @@ async function extractPlaceholders(bytes, { maxPages = 1 } = {}) {
         const last = line.runs[line.runs.length - 1];
         const lineX = first.x - ox;
         const lineWidth = last.x + last.width - first.x;
+        const leftAligned = !line.alone || sharedEdge(first.x);
+        const limit = round((line.next === null ? Math.max(textRight, last.x + last.width) : line.next - Math.max(4, first.size * 0.5)) - ox);
+        let lineFont = null; // the font of most of the line's text (the words around the placeholders keep it)
+        const lineFontOf = async () => {
+          if (!lineFont) {
+            const main = line.runs.reduce((a, b) => (b.str.length > a.str.length ? b : a));
+            lineFont = fontOf(main.family, await fontStyle(main.fontName));
+          }
+          return lineFont;
+        };
         const locate = async (offset) => {
           const span = [...spans].reverse().find((s) => s.start <= offset) || spans[0];
           const local = Math.min(offset - span.start, span.run.str.length);
@@ -209,26 +257,33 @@ async function extractPlaceholders(bytes, { maxPages = 1 } = {}) {
           const end = await locate(m.index + m[0].length);
           const run = start.span.run;
           const inline = text.trim() !== m[0].trim();
+          const x = round(start.x - ox);
+          const width = round(Math.max(1, end.x - start.x));
           found.push({
             text: m[0],
             name,
             page: p - 1,
-            x: round(start.x - ox),
+            x,
             y: round(run.y - oy),
-            width: round(Math.max(1, end.x - start.x)),
+            width,
             size: round(run.size),
             font: fontOf(run.family, await fontStyle(run.fontName)),
-            line: inline
-              ? { text: text.trim(), x: round(lineX), width: round(lineWidth), centred: Math.abs(lineX + lineWidth / 2 - pageWidth / 2) < pageWidth * 0.06 }
-              : null,
+            centred: !leftAligned && (inline ? centredOnPage(lineX, lineWidth) : centredOnPage(x, width, 0.08)),
+            limit,
+            line: inline ? { text: text.trim(), x: round(lineX), width: round(lineWidth), font: await lineFontOf(), limit } : null,
           });
         }
       }
     }
-    // The cover colour: what is around the placeholder (or its whole line) on the page.
-    const colours = await sampleBackgrounds(pdf, found.map((f) => (f.line ? { page: f.page, x: f.line.x, y: f.y, width: f.line.width, size: f.size } : f)));
+    // The cover colour (what is around the placeholder, or its whole line) and the colours of the letters.
+    const colours = await sampleColours(
+      pdf,
+      found.map((f) => ({ page: f.page, own: f, box: f.line ? { x: f.line.x, y: f.y, width: f.line.width, size: f.size } : f })),
+    );
     found.forEach((f, i) => {
-      f.background = colours[i];
+      f.background = colours[i].background;
+      f.color = colours[i].text;
+      if (f.line) f.line.color = colours[i].lineText;
     });
   } finally {
     await task.destroy().catch(() => {});
@@ -259,7 +314,7 @@ function suggestField(name, fields) {
  */
 function toMappings(found, fields, pageWidth) {
   return found.map((p) => {
-    const centred = p.line ? p.line.centred : Math.abs(p.x + p.width / 2 - pageWidth / 2) < pageWidth * 0.08;
+    const centred = p.centred ?? Math.abs(p.x + p.width / 2 - pageWidth / 2) < pageWidth * 0.08;
     return {
       text: p.text,
       page: p.page,
@@ -269,11 +324,12 @@ function toMappings(found, fields, pageWidth) {
       size: p.size,
       field: suggestField(p.name, fields),
       font: p.font,
-      color: '#1b1b20',
+      color: p.color || '#1b1b20', // as the placeholder is printed in the design, when that can be seen
       align: centred ? 'center' : 'left',
-      // In a sentence: the whole line is set again (see drawMappings).
+      limit: p.limit ?? null, // where a left-aligned value must stop (the next text on its baseline, or the text's right edge)
+      // In a sentence: the line is set again with the values in it (see drawMappings).
       fit: Boolean(p.line),
-      line: p.line ? { text: p.line.text, x: p.line.x, width: p.line.width } : null,
+      line: p.line ? { text: p.line.text, x: p.line.x, width: p.line.width, font: p.line.font ?? null, color: p.line.color ?? null, limit: p.line.limit ?? null } : null,
       cover: p.background || '#ffffff',
     };
   });
@@ -295,7 +351,14 @@ function validateMappings(raw, fieldIds, { pages = 50 } = {}) {
       return null;
     }
     const line = m.line && typeof m.line === 'object'
-      ? { text: typeof m.line.text === 'string' ? m.line.text.slice(0, 400) : '', x: num(m.line.x, -100, 5000), width: num(m.line.width, 0.5, 5000) }
+      ? {
+          text: typeof m.line.text === 'string' ? m.line.text.slice(0, 400) : '',
+          x: num(m.line.x, -100, 5000),
+          width: num(m.line.width, 0.5, 5000),
+          font: FONT_IDS.includes(m.line.font) ? m.line.font : null,
+          color: typeof m.line.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(m.line.color) ? m.line.color.toLowerCase() : null,
+          limit: m.line.limit == null ? null : num(m.line.limit, -100, 5000),
+        }
       : null;
     const out = {
       text: typeof m.text === 'string' ? m.text.slice(0, 80) : '',
@@ -308,6 +371,7 @@ function validateMappings(raw, fieldIds, { pages = 50 } = {}) {
       font: FONT_IDS.includes(m.font) ? m.font : null,
       color: typeof m.color === 'string' && /^#[0-9a-fA-F]{6}$/.test(m.color) ? m.color.toLowerCase() : null,
       align: ALIGNS.includes(m.align) ? m.align : null,
+      limit: m.limit == null ? null : num(m.limit, -100, 5000),
       fit: typeof m.fit === 'boolean' ? m.fit : null,
       line,
       cover: m.cover === null || m.cover === 'none' ? null : typeof m.cover === 'string' && /^#[0-9a-fA-F]{6}$/.test(m.cover) ? m.cover.toLowerCase() : undefined,
@@ -364,28 +428,50 @@ async function drawMappings(doc, pages, mappings, valueOf) {
     if (!value) continue;
     const { width: W } = page.getSize();
     const anchor = m.align === 'center' ? m.x + m.width / 2 : m.align === 'right' ? m.x + m.width : m.x;
-    const room = m.align === 'center' ? 2 * Math.min(anchor, W - anchor) - 40 : m.align === 'right' ? anchor - 20 : W - anchor - 20;
+    const right = m.limit != null && m.limit > anchor ? Math.min(m.limit, W - 20) : W - 20;
+    const room = m.align === 'center' ? 2 * Math.min(anchor, W - anchor) - 40 : m.align === 'right' ? anchor - 20 : right - anchor;
     const t = fitText(font, value, m.size, Math.max(4, m.size * 0.5), room);
     const w = font.widthOfTextAtSize(t.text, t.size);
     page.drawText(t.text, { x: m.align === 'center' ? anchor - w / 2 : m.align === 'right' ? anchor - w : anchor, y: m.y, size: t.size, font, color: hex(m.color) });
   }
 
-  // Placeholders inside a sentence: the line, its placeholders replaced by their values, set where it was.
+  // Placeholders inside a sentence: the line set again with the values in place. A centred (or right-aligned) line is
+  // set again whole, so it stays centred; in left-aligned text only from the first value on, so the words before it
+  // stay as designed. The words keep the line's font; each value has its placeholder's font and colour.
   for (const group of lines.values()) {
-    if (!group.some((m) => m.field)) continue; // nothing to replace: leave the line as designed
+    const mapped = group.filter((m) => m.field);
+    if (!mapped.length) continue; // nothing to replace: leave the line as designed
     const first = group[0];
+    const { line } = first;
     const page = pages[first.page];
-    const font = await fontFor(first.font);
-    let text = first.line.text;
-    for (const m of group) if (m.field) text = text.split(m.text).join(String(valueOf(m.field) ?? ''));
-    const { x, width } = first.line;
-    if (first.cover) page.drawRectangle({ x: x - 2, y: first.y - first.size * 0.3, width: width + 4, height: first.size * 1.25, color: hex(first.cover) });
     const { width: W } = page.getSize();
-    const anchor = first.align === 'center' ? x + width / 2 : first.align === 'right' ? x + width : x;
-    const room = first.align === 'center' ? 2 * Math.min(anchor, W - anchor) - 40 : first.align === 'right' ? anchor - 20 : W - anchor - 20;
-    const t = fitText(font, text, first.size, Math.max(4, first.size * 0.7), room);
-    const w = font.widthOfTextAtSize(t.text, t.size);
-    page.drawText(t.text, { x: first.align === 'center' ? anchor - w / 2 : first.align === 'right' ? anchor - w : anchor, y: first.y, size: t.size, font, color: hex(first.color) });
+    const size = first.size;
+    const words = await fontFor(line.font || first.font);
+    const whole = first.align !== 'left';
+    const from = whole ? null : mapped.reduce((a, b) => (b.x < a.x ? b : a));
+    const startX = whole ? line.x : from.x;
+    let rest = whole ? line.text : line.text.slice(Math.max(0, line.text.indexOf(from.text)));
+    const segments = [];
+    for (const m of [...group].sort((a, b) => a.x - b.x)) {
+      const i = rest.indexOf(m.text);
+      if (i < 0) continue;
+      if (i > 0) segments.push({ text: rest.slice(0, i), font: words, color: line.color || first.color });
+      segments.push(m.field ? { text: String(valueOf(m.field) ?? ''), font: await fontFor(m.font), color: m.color } : { text: m.text, font: words, color: line.color || first.color });
+      rest = rest.slice(i + m.text.length);
+    }
+    if (rest) segments.push({ text: rest, font: words, color: line.color || first.color });
+    const natural = segments.reduce((w, sg) => w + sg.font.widthOfTextAtSize(sg.text, size), 0);
+    const centre = line.x + line.width / 2;
+    const right = line.limit != null && line.limit > startX ? Math.min(line.limit, W - 20) : W - 20;
+    const room = first.align === 'center' ? 2 * Math.min(centre, W - centre) - 40 : first.align === 'right' ? line.x + line.width - 20 : right - startX;
+    const scale = natural > room ? Math.max(0.6, room / natural) : 1;
+    if (first.cover) page.drawRectangle({ x: startX - 2, y: first.y - size * 0.3, width: line.x + line.width - startX + 4, height: size * 1.25, color: hex(first.cover) });
+    let x = first.align === 'center' ? centre - (natural * scale) / 2 : first.align === 'right' ? line.x + line.width - natural * scale : startX;
+    for (const sg of segments) {
+      if (!sg.text) continue;
+      page.drawText(sg.text, { x, y: first.y, size: size * scale, font: sg.font, color: hex(sg.color) });
+      x += sg.font.widthOfTextAtSize(sg.text, size * scale);
+    }
   }
 }
 

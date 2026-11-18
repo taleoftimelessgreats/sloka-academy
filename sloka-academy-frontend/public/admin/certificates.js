@@ -195,9 +195,11 @@ export async function viewSessionForm(id, stale) {
 
 export async function viewSessionDetail(id, params, stale) {
   const page = Math.max(1, Number(params.get('page')) || 1);
+  // The participants' names and contacts need Participant (student) data → View (and the certificates).
+  const seesParticipants = canAny('certificates.view+students.view');
   const [{ session: s }, regs, designs] = await Promise.all([
     api('GET', `/api/sessions/${id}`),
-    api('GET', `/api/certificates?sessionId=${id}&page=${page}&pageSize=50`),
+    seesParticipants ? api('GET', `/api/certificates?sessionId=${id}&page=${page}&pageSize=50`) : null,
     api('GET', '/api/templates'),
   ]);
   const design = s.templateId ? designs.templates.find((t) => t.id === s.templateId) : designs.templates.find((t) => t.isDefault);
@@ -289,7 +291,7 @@ export async function viewSessionDetail(id, params, stale) {
         { class: 'row' },
         h('a', { class: 'btn', href: `#/sessions/${id}/edit` }, 'Edit'),
         h('button', { class: s.registrationOpen ? 'btn' : 'btn btn-primary', type: 'button', onclick: act('PATCH', `/api/sessions/${id}`, { registrationOpen: !s.registrationOpen }, s.registrationOpen ? 'Registration closed' : 'Registration opened') }, s.registrationOpen ? 'Close registration' : 'Open registration'),
-        can('sessions.export') ? h('a', { class: 'btn', href: `/api/sessions/${id}/export`, download: '' }, 'Export CSV') : null,
+        canAny('sessions.export+students.view') ? h('a', { class: 'btn', href: `/api/sessions/${id}/export`, download: '' }, 'Export CSV') : null,
         canDelete ? del : null,
       ),
       canDelete && s.registrations > 0 ? h('p', { class: 'muted small' }, 'Sessions with registrations cannot be deleted; close registration instead.') : null,
@@ -308,13 +310,10 @@ export async function viewSessionDetail(id, params, stale) {
         'div',
         { class: 'stack' },
         h('section', { class: 'card' }, dl),
-        h(
-          'section',
-          { class: 'card card-flush' },
-          h('h2', null, `Registrations (${regs.total})`),
-          h('div', { class: 'table-wrap' }, registrationsTable(regs.items, { showSession: false })),
-        ),
-        regs.total > regs.pageSize ? pagerEl(regs, hrefFor) : null,
+        regs
+          ? h('section', { class: 'card card-flush' }, h('h2', null, `Registrations (${regs.total})`), h('div', { class: 'table-wrap' }, registrationsTable(regs.items, { showSession: false })))
+          : h('section', { class: 'card' }, h('h2', null, `Registrations (${s.registrations})`), h('p', { class: 'muted small' }, 'Seeing who registered needs the Participant (student) data → View permission.')),
+        regs && regs.total > regs.pageSize ? pagerEl(regs, hrefFor) : null,
       ),
       h('div', { class: 'stack' }, codeCard, linkCard, adminCard),
     ),
@@ -577,7 +576,7 @@ export async function viewCertificateDetail(id, stale) {
         { class: 'stack' },
         data.verification ? verificationPanel(data.verification, { reload, showRecord: false }) : null,
         h('section', { class: 'card' }, dl),
-        referralsCard(data.referrals || []),
+        data.referrals ? referralsCard(data.referrals) : null, // the friends are enquiries: only with Enquiry data → View
         h('section', { class: 'card' }, h('h2', null, 'Activity'), timeline),
       ),
       h('div', { class: 'stack' }, actions, adminCards),

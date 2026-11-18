@@ -2,7 +2,8 @@
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { startApp, addUser, login, client } = require('./helpers');
+const { startApp, addUser, login, client, referral, ALLOWED_ORIGIN } = require('./helpers');
+const { localDate } = require('../src/util');
 const { ALL_PERMISSIONS } = require('../src/permissions');
 
 describe('roles & permissions', () => {
@@ -77,5 +78,65 @@ describe('roles & permissions', () => {
     assert.ok(all.items.every((i) => i.entity === 'role'));
     assert.equal((await adminApi.get('/api/audit?entity=nope')).status, 400);
     assert.equal((await adminApi.get('/api/audit?from=2001-01-01&to=2001-12-31')).data.total, 0);
+  });
+
+  test('enquiry and participant data need their View permissions wherever they appear', async () => {
+    const grid = (await superApi.get('/api/roles')).data;
+    const label = (id) => grid.modules.find((m) => m.id === id).label;
+    assert.equal(label('enquiries'), 'Enquiry data');
+    assert.equal(label('students'), 'Participant (student) data');
+
+    // A participant (with a referred friend, who becomes an enquiry) and an enquiry of their own.
+    const s = (await superApi.post('/api/sessions', { title: 'Careers in VLSI', sessionDate: localDate(), mode: 'online' })).data.session;
+    const reg = await fetch(`${ctx.base}/api/public/certificate-registrations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Origin: ALLOWED_ORIGIN },
+      body: JSON.stringify({ sessionId: s.id, code: s.code, name: 'Asha Kumar', email: 'asha@example.com', phone: '9876543210', college: 'JNTU', consent: true, ...referral() }),
+    });
+    assert.equal(reg.status, 201);
+    assert.equal((await superApi.post('/api/inquiries', { source: 'phone-call', name: 'Asha Kumar', phone: '9876543210', consent: true })).status, 201);
+    const certId = (await superApi.get('/api/certificates')).data.items[0].id;
+    const studentId = (await superApi.get('/api/students')).data.items.find((x) => x.name === 'Asha Kumar').id;
+
+    // Someone with a role made of chosen permissions.
+    let n = 0;
+    const as = async (permissions) => {
+      n += 1;
+      const role = (await superApi.post('/api/roles', { name: `Data test ${n}`, scope: 'all', permissions })).data.role;
+      const u = await addUser(ctx.db, { name: `Tester ${n}`, email: `tester${n}@sloka.test`, role: role.key, password: 'tester-password-123' });
+      return client(ctx.base, (await login(ctx.base, u.email, u.password)).cookie);
+    };
+
+    // Certificates list participants: without Participant (student) data -> View, no certificate route answers.
+    const certsOnly = await as(['certificates.view', 'certificates.export', 'sessions.view', 'sessions.export']);
+    for (const path of ['/api/certificates', `/api/certificates/${certId}`, `/api/certificates/${certId}/pdf`, '/api/certificates/export', `/api/sessions/${s.id}/export`]) {
+      assert.equal((await certsOnly.get(path)).status, 403, path);
+    }
+    assert.equal((await certsOnly.get(`/api/sessions/${s.id}`)).status, 200, 'the session itself is not participant data');
+    assert.equal((await certsOnly.get('/api/stats')).data.recentRegistrations, undefined, 'nor the latest participants on the overview');
+
+    // With it (and no Enquiry data -> View): participants, but not the enquiries (referred friends, a student's enquiries).
+    const participants = await as(['certificates.view', 'students.view', 'students.export']);
+    const cert = await participants.get(`/api/certificates/${certId}`);
+    assert.equal(cert.status, 200);
+    assert.equal(cert.data.referrals, null);
+    const profile = (await participants.get(`/api/students/${studentId}`)).data;
+    assert.equal(profile.enquiries, null);
+    assert.equal(profile.student.latestEnquiryStatus, undefined);
+    assert.equal(profile.student.enquiries, 1, 'counts only');
+    assert.ok((await participants.get('/api/stats')).data.recentRegistrations.length);
+    assert.equal((await participants.get('/api/inquiries')).status, 403);
+
+    // Every enquiry route needs Enquiry data -> View, even the export.
+    const exportOnly = await as(['enquiries.export', 'enquiries.create']);
+    assert.equal((await exportOnly.get('/api/inquiries/export')).status, 403);
+    assert.equal((await exportOnly.post('/api/inquiries', { source: 'phone-call', name: 'X Y', phone: '9123456780', consent: true })).status, 403);
+    const both = await as(['students.view', 'enquiries.view', 'certificates.view']);
+    assert.equal((await both.get(`/api/students/${studentId}`)).data.enquiries.length, 1);
+    assert.equal((await both.get(`/api/certificates/${certId}`)).data.referrals.length, 1);
+
+    // Student routes need Participant (student) data -> View too.
+    const studentExportOnly = await as(['students.export']);
+    assert.equal((await studentExportOnly.get('/api/students/export')).status, 403);
   });
 });

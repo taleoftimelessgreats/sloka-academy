@@ -1,6 +1,7 @@
 'use strict';
 
 const C = require('./constants');
+const { studentScope, enquiryVisible } = require('./scope');
 const { detachFromStudent } = require('./profileVerification');
 const { regToApi } = require('./certificateRepo');
 const { toApi: inquiryToApi } = require('./inquiryRepo');
@@ -61,11 +62,19 @@ const PROGRAMS = {
 
 const escapeLike = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
-/** Parse list/export filters. Returns { errors, where, params, order, page, pageSize }. */
-function parseStudentFilters(query) {
+/**
+ * Parse list/export filters. Returns { errors, where, params, order, page, pageSize }.
+ * scopeIds: the associates the user's data scope covers (null = every student; see scope.js).
+ */
+function parseStudentFilters(query, { scopeIds = null } = {}) {
   const errors = {};
   const clauses = [];
   const params = [];
+  const scope = studentScope(scopeIds);
+  if (scope.sql) {
+    clauses.push(scope.sql);
+    params.push(...scope.params);
+  }
   const str = (key) => {
     const v = query[key];
     if (v === undefined || v === '') return undefined;
@@ -153,7 +162,15 @@ function createStudentRepo(db, { studentIdPrefix = 'SLK' } = {}) {
   const regIds = async (id) => (await db.all('SELECT id FROM certificate_registrations WHERE student_id = ?', [id])).map((r) => r.id);
   const inqIds = async (id) => (await db.all('SELECT id FROM inquiries WHERE student_id = ?', [id])).map((r) => r.id);
 
-  async function detail(id) {
+  /** Whether the student is within a data scope (scopeIds null = everyone). */
+  async function inScope(id, scopeIds) {
+    if (!scopeIds) return true;
+    const scope = studentScope(scopeIds);
+    return Boolean(await db.get(`SELECT st.id FROM students st WHERE st.id = ? AND ${scope.sql}`, [id, ...scope.params]));
+  }
+
+  /** The profile with certificates and enquiries; enquiries outside the data scope are left out. */
+  async function detail(id, scopeIds = null) {
     const [student, certs, enquiries] = await Promise.all([
       get(id),
       db.all(
@@ -170,7 +187,8 @@ function createStudentRepo(db, { studentIdPrefix = 'SLK' } = {}) {
       ),
     ]);
     if (!student) return null;
-    return { student, certificates: certs.map(regToApi), enquiries: enquiries.map(inquiryToApi) };
+    const visible = enquiries.map(inquiryToApi).filter((i) => enquiryVisible(i, scopeIds));
+    return { student, certificates: certs.map(regToApi), enquiries: visible };
   }
 
   async function list(f) {
@@ -231,9 +249,12 @@ function createStudentRepo(db, { studentIdPrefix = 'SLK' } = {}) {
     });
   }
 
-  const count = async () => (await db.get('SELECT COUNT(*) AS n FROM students')).n;
+  const count = async (scopeIds = null) => {
+    const scope = studentScope(scopeIds);
+    return (await db.get(`SELECT COUNT(*) AS n FROM students st ${scope.sql ? `WHERE ${scope.sql}` : ''}`, scope.params)).n;
+  };
 
-  return { get, detail, list, exportRows, update, remove, count };
+  return { get, detail, list, exportRows, update, remove, count, inScope };
 }
 
 module.exports = { createStudentRepo, parseStudentFilters, studentToApi: toApi };

@@ -4,6 +4,7 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { startApp, addUser, login, client } = require('./helpers');
 const { localDate } = require('../src/util');
+const { longDate } = require('../src/certificatePdf');
 
 const day = (n) => {
   const d = new Date();
@@ -100,7 +101,7 @@ describe('internship registrations', () => {
     assert.equal(full.data.registration.paymentStatus, 'fully-paid');
   });
 
-  test('a new student: master record, enrollment, token payment, slot confirmed, offer letter generated', async () => {
+  test('a new student: master record, enrollment, token payment, slot confirmed; no offer letter until fully paid', async () => {
     assert.deepEqual((await apis.bhavana.get('/api/registrations/lookup?phone=9876543210&email=priya@example.com')).data.matches, []);
     const r = await register(apis.bhavana, {});
     assert.equal(r.status, 201, JSON.stringify(r.data));
@@ -115,8 +116,8 @@ describe('internship registrations', () => {
     assert.match(reg.student.studentCode, /^SLK-STU-\d{4}-\d{5}$/);
     assert.equal(reg.student.phone, '+919876543210');
     assert.equal(reg.student.email, 'priya@example.com');
-    assert.match(reg.offerLetter.offerLetterId, new RegExp(`^SLK/OL/${new Date().getFullYear()}/\\d{4}$`));
-    assert.equal(r.data.offerLetter.status, 'generated');
+    assert.equal(reg.offerLetter, null, 'issued once the fee is fully paid');
+    assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM offer_letters')).n, 0);
     const s = await ctx.db.get('SELECT * FROM students WHERE id = ?', [reg.student.id]);
     assert.equal(s.gender, 'female');
     assert.equal(s.qualification, 'B.Tech');
@@ -271,30 +272,111 @@ describe('internship registrations', () => {
     assert.equal(stats.dueThisWeek, 1);
   });
 
-  test('offer letter: download, regenerate (same ID), email to the student with status and log', async () => {
+  test('insights follow the filters: period, associate and both together, matching the list', async () => {
+    // Now: Full Payer (Ravi, 5000/5000), Priya DS (Bhavana, 7000/15999), Priya AWS (Bhavana, 1000/9999, due in 2 days),
+    // Late Payer (Ravi, registered 40 days ago, 2000/14999, overdue).
+    const get = async (api, q = '') => (await api.get(`/api/registrations/insights?${q}`)).data;
+    const all = await get(apis.admin);
+    assert.equal(all.insights.registrations, 4);
+    assert.equal(all.insights.committed, 45997);
+    assert.equal(all.insights.collected, 15000);
+    assert.equal(all.insights.outstanding, 30997);
+    assert.deepEqual([all.insights.fullyPaid, all.insights.partiallyPaid, all.insights.slotConfirmed], [1, 1, 2]);
+    assert.deepEqual([all.insights.dueThisWeek, all.insights.overdue, all.insights.overdueAmount], [1, 1, 12999]);
+    assert.equal(all.insights.collectionRate, 32.6);
+    assert.deepEqual(all.insights.byAssociate.map((r) => [r.associate.name, r.registrations, r.committed, r.collected]), [
+      ['Bhavana BD', 2, 25998, 8000],
+      ['Ravi BD', 2, 19999, 7000],
+    ]);
+    assert.deepEqual(all.views, { all: 4, dueThisWeek: 1, overdue: 1 });
+    assert.equal(all.received, null, 'no period chosen');
+
+    // One associate.
+    const ravi = (await get(apis.admin, `bdAssociateId=${ids.ravi}`)).insights;
+    assert.deepEqual([ravi.registrations, ravi.collected, ravi.overdue], [2, 7000, 1]);
+    // A period: registrations made in it, and the payments received in it (whenever the student registered).
+    const past = await get(apis.admin, `regFrom=${day(-60)}&regTo=${day(-30)}`);
+    assert.equal(past.insights.registrations, 1);
+    assert.deepEqual(past.received, { amount: 0, payments: 0, from: day(-60), to: day(-30) }, "Late Payer's token was paid today");
+    const todayOnly = await get(apis.admin, `regFrom=${localDate()}&regTo=${localDate()}`);
+    assert.equal(todayOnly.insights.registrations, 3);
+    assert.deepEqual([todayOnly.received.amount, todayOnly.received.payments], [15000, 5], 'every payment so far was made today');
+    // Both, and a view on top: the same registrations as the list.
+    const q = `bdAssociateId=${ids.ravi}&regFrom=${day(-60)}&regTo=${localDate()}&view=overdue`;
+    const both = await get(apis.admin, q);
+    assert.equal(both.insights.registrations, (await apis.admin.get(`/api/registrations?${q}`)).data.total);
+    assert.deepEqual([both.insights.registrations, both.insights.collected], [1, 2000]);
+    assert.deepEqual(both.views, { all: 2, dueThisWeek: 0, overdue: 1 }, 'tab counts under the other filters');
+    // A team lead: her team only, whatever she asks for.
+    const lead = await get(apis.lead);
+    assert.deepEqual([lead.insights.registrations, lead.insights.byAssociate.length], [2, 1]);
+    assert.equal((await get(apis.lead, `bdAssociateId=${ids.ravi}`)).insights.registrations, 0);
+    assert.equal((await apis.admin.get('/api/registrations/insights?regFrom=soon')).status, 400);
+    // The associate list tells the portal who is in her team (for the filter).
+    const staff = (await apis.lead.get('/api/staff')).data.staff;
+    assert.deepEqual(staff.filter((s) => s.inScope).map((s) => s.name).sort(), ['Bhavana BD', 'Lakshmi Lead']);
+  });
+
+  test('offer letter: only once fully paid, with the internship start date entered; regenerate (same ID), email with status and log', async () => {
     const id = ctx.priya.id;
+    assert.equal((await apis.bhavana.get(`/api/registrations/${id}/offer-letter`)).data.offerLetter, null);
+    // A balance is due: no letter yet.
+    const early = await apis.bhavana.post(`/api/registrations/${id}/offer-letter/generate`, { startDate: day(10) });
+    assert.equal(early.status, 409);
+    assert.equal(early.data.error, 'balance_due');
+    assert.match(early.data.message, /₹8,999 is still due/);
+    assert.equal((await apis.bhavana.post(`/api/registrations/${id}/offer-letter/send`, { startDate: day(10) })).status, 409);
+    const paid = await apis.accounts.post(`/api/registrations/${id}/payments`, { amount: 8999, paymentMode: 'upi' });
+    assert.equal(paid.data.registration.paymentStatus, 'fully-paid');
+
+    // The internship start date: required, a real date, not before the registration.
+    for (const [body, re] of [[{}, /Enter the internship start date/], [{ startDate: '2026-02-30' }, /valid date/], [{ startDate: day(-1) }, /before the registration/]]) {
+      const r = await apis.bhavana.post(`/api/registrations/${id}/offer-letter/generate`, body);
+      assert.equal(r.status, 400, JSON.stringify(body));
+      assert.match(r.data.fields.startDate, re);
+    }
+    const made = await apis.bhavana.post(`/api/registrations/${id}/offer-letter/generate`, { startDate: day(10) });
+    assert.equal(made.status, 200, JSON.stringify(made.data));
+    const letter = made.data.offerLetter;
+    assert.match(letter.offerLetterId, new RegExp(`^SLK/OL/${new Date().getFullYear()}/\\d{4}$`));
+    assert.equal(letter.internshipStartDate, day(10));
+    assert.equal(letter.status, 'generated');
+    const stored = JSON.parse((await ctx.db.get('SELECT content FROM offer_letters WHERE enrollment_id = ?', [id])).content);
+    assert.equal(stored.values.internship_start_date, longDate(day(10)), 'printed on the letter');
     const pdf = await fetch(`${ctx.base}/api/registrations/${id}/offer-letter/pdf`, { headers: { Cookie: (await login(ctx.base, 'bhavana@sloka.test', 'bhavana-password-123')).cookie } });
     assert.equal(pdf.status, 200);
     assert.equal(pdf.headers.get('content-type'), 'application/pdf');
     assert.match(pdf.headers.get('content-disposition'), /Offer-Letter-SLK-OL-\d{4}-\d{4}\.pdf/);
-    const before = (await apis.bhavana.get(`/api/registrations/${id}/offer-letter`)).data.offerLetter;
-    const again = (await apis.bhavana.post(`/api/registrations/${id}/offer-letter/generate`)).data.offerLetter;
-    assert.equal(again.offerLetterId, before.offerLetterId);
+
+    // Regenerate with another date: same ID.
+    const again = (await apis.bhavana.post(`/api/registrations/${id}/offer-letter/generate`, { startDate: day(12) })).data.offerLetter;
+    assert.equal(again.offerLetterId, letter.offerLetterId);
+    assert.equal(again.internshipStartDate, day(12));
     assert.deepEqual(again.events.map((e) => e.type), ['regenerated', 'generated']);
-    assert.equal((await apis.accounts.post(`/api/registrations/${id}/offer-letter/send`)).status, 403, 'Accounts only view letters');
-    const sent = (await apis.bhavana.post(`/api/registrations/${id}/offer-letter/send`)).data.offerLetter;
+    assert.equal((await apis.accounts.post(`/api/registrations/${id}/offer-letter/send`, { startDate: day(12) })).status, 403, 'Accounts only view letters');
+    // Sending with the same date emails the letter as it is.
+    const sent = (await apis.bhavana.post(`/api/registrations/${id}/offer-letter/send`, { startDate: day(12) })).data.offerLetter;
     assert.equal(sent.status, 'sent');
     assert.ok(sent.sentAt);
+    assert.deepEqual(sent.events.map((e) => e.type), ['sent', 'regenerated', 'generated']);
     const mail = ctx.outbox.find((m) => m.subject.includes('offer letter'));
     assert.equal(mail.to, 'priya@example.com');
     assert.match(mail.attachments[0].filename, /^Offer-Letter-SLK-OL-/);
     assert.match(mail.text, /internship in Data Science/);
+    // Another date: the letter is regenerated, then sent.
     ctx.mail.fail = 'mailbox full';
-    const failed = (await apis.bhavana.post(`/api/registrations/${id}/offer-letter/send`)).data.offerLetter;
+    const failed = (await apis.bhavana.post(`/api/registrations/${id}/offer-letter/send`, { startDate: day(15) })).data.offerLetter;
     ctx.mail.fail = null;
     assert.equal(failed.status, 'failed');
+    assert.equal(failed.internshipStartDate, day(15));
     assert.match(failed.emailError, /mailbox full/);
-    assert.deepEqual(failed.events.slice(0, 2).map((e) => e.type), ['failed', 'sent']);
+    assert.deepEqual(failed.events.slice(0, 3).map((e) => e.type), ['failed', 'regenerated', 'sent']);
+
+    // Fully paid at registration: the letter can be issued straight away.
+    const fullPayer = (await apis.ravi.get('/api/registrations')).data.items.find((e) => e.student.name === 'Full Payer');
+    assert.equal((await apis.ravi.post(`/api/registrations/${fullPayer.id}/offer-letter/generate`, { startDate: day(7) })).status, 200);
+    const ins = (await apis.admin.get('/api/registrations/insights')).data.insights;
+    assert.deepEqual([ins.offerLetters, ins.awaitingOfferLetter], [2, 0]);
   });
 
   test('registration CSV export and deletion (logged); erasing a student removes their registrations', async () => {
@@ -307,7 +389,7 @@ describe('internship registrations', () => {
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM payments WHERE enrollment_id = ?', [ctx.raviReg.id])).n, 0);
     assert.equal((await apis.admin.del(`/api/students/${ctx.priya.student.id}`)).status, 204);
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM enrollments WHERE student_id = ?', [ctx.priya.student.id])).n, 0);
-    assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM offer_letters')).n, 2, 'only the other registrations keep theirs');
+    assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM offer_letters')).n, 1, "Full Payer's stays");
     const log = (await apis.admin.get('/api/audit')).data.items;
     assert.ok(log.some((i) => i.entity === 'enrollment' && i.action === 'delete'));
     assert.ok(log.some((i) => i.entity === 'student' && i.action === 'delete'));

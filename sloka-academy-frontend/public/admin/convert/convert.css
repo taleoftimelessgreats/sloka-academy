@@ -1,0 +1,82 @@
+/* The converter's stage: each page is laid out at its paper size, one under the other, then drawn as an image. */
+html,
+body {
+  margin: 0;
+  background: #fff;
+}
+#stage {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+
+/* Word (docx-preview): plain white pages, no preview frame around them. */
+.docx-host .docx-wrapper {
+  background: #fff !important;
+  padding: 0 !important;
+  display: block !important;
+}
+.docx-host .docx-wrapper > section.docx {
+  margin: 0 0 40px !important;
+  box-shadow: none !important;
+}
+
+/* PowerPoint: slides drawn from pptxtojson's data (convert.js). */
+.slide {
+  position: relative;
+  overflow: hidden;
+  background: #fff;
+  margin-bottom: 40px;
+}
+.slide .el {
+  position: absolute;
+  box-sizing: border-box;
+}
+.slide .shape {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+.slide .text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  overflow-wrap: break-word;
+  line-height: 1.2;
+}
+.slide .text p {
+  margin: 0;
+}
+.slide .text.nowrap {
+  white-space: nowrap;
+}
+.slide .text.vertical {
+  writing-mode: vertical-rl;
+}
+.slide .crop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.slide img {
+  display: block;
+  position: absolute;
+}
+.slide table {
+  border-collapse: collapse;
+  width: 100%;
+  height: 100%;
+  table-layout: fixed;
+}
+.slide td {
+  padding: 3.6pt 7.2pt;
+  vertical-align: top;
+  overflow-wrap: break-word;
+}
+.slide td p {
+  margin: 0;
+}

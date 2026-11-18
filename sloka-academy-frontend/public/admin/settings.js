@@ -2,7 +2,7 @@
 // course master and the offer letter signatory.
 // Rendered with DOM APIs / textContent only. Never use innerHTML with data.
 
-import { ApiError, api, can, clearErrors, copyBtn, errorText, field, fieldMessage, fmtBytes, fmtDateTime, go, h, mount, pdfUrl, selectEl, showErrors, state, toast } from './core.js';
+import { ApiError, api, can, clearErrors, copyBtn, errorText, field, fieldMessage, fmtBytes, fmtDateTime, go, h, mount, newId, pdfUrl, selectEl, showErrors, state, toast } from './core.js';
 
 // ------------------------------------------------------------------ view: settings (admin)
 
@@ -195,9 +195,18 @@ export function designsCard(designs, reload) {
         'tr',
         { class: t.archived ? 'archived' : null },
         h('td', { class: 'primary', 'data-label': 'Design' }, editable ? h('a', { class: 'name', href: `#/settings/templates/${t.id}` }, t.name) : h('span', { class: 'name' }, t.name), h('span', { class: 'sub' }, `Uploaded ${fmtDateTime(t.createdAt)}${t.createdBy ? ` by ${t.createdBy.name}` : ''}${t.archived ? ' · archived' : ''}`)),
-        td('File', `${t.fileType.toUpperCase()} · ${fmtBytes(t.fileSize)}`),
+        td('File', `${fileKind(t)} · ${fmtBytes(t.fileSize)}`),
         td('Used by', used || h('span', { class: 'muted' }, 'Not used yet')),
-        td('Default', t.isDefault ? defaultBadge.cloneNode(true) : t.archived || !editable ? h('span', { class: 'muted' }, '—') : h('button', { class: 'btn btn-sm', type: 'button', onclick: makeDefault(t.id) }, 'Make default')),
+        td(
+          'Default',
+          t.isDefault
+            ? defaultBadge.cloneNode(true)
+            : t.archived || !editable
+              ? h('span', { class: 'muted' }, '—')
+              : mappingPending(t.layout)
+                ? h('a', { class: 'btn btn-sm btn-primary', href: `#/settings/templates/${t.id}` }, 'Map placeholders')
+                : h('button', { class: 'btn btn-sm', type: 'button', onclick: makeDefault(t.id) }, 'Make default'),
+        ),
         td('Actions', actions),
       );
     }),
@@ -214,7 +223,7 @@ export function designsCard(designs, reload) {
 
   // Upload
   const name = h('input', { name: 'name', maxlength: '80', placeholder: 'e.g. Career guidance 2026', required: true });
-  const file = h('input', { name: 'file', type: 'file', accept: '.pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg', required: true });
+  const file = h('input', { name: 'file', type: 'file', accept: UPLOAD_ACCEPT, required: true });
   const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Upload design');
   const form = h(
     'form',
@@ -224,7 +233,11 @@ export function designsCard(designs, reload) {
       'div',
       { class: 'form-grid' },
       field('Name', name, { name: 'name', required: true }),
-      field('File', file, { name: 'file', required: true, hint: `PDF (first page is used; placeholders in its text are found), PNG or JPEG, up to ${fmtBytes(designs.maxBytes)}. Keep it under 2 MB so emails stay small.` }),
+      field('File', file, {
+        name: 'file',
+        required: true,
+        hint: `PDF, Word (.docx) or PowerPoint (.pptx), up to ${fmtBytes(designs.maxBytes)}. The first page is used; placeholders in its text, such as {{Student Name}}, are found and you map each one. Word and PowerPoint files are converted to PDF in your browser first. Images cannot be used: they have no text to find placeholders in. Keep it under 2 MB so emails stay small.`,
+      }),
     ),
     h('p', { class: 'form-error', role: 'alert' }),
     h('div', { class: 'form-actions' }, submit),
@@ -238,11 +251,12 @@ export function designsCard(designs, reload) {
       return;
     }
     submit.disabled = true;
-    submit.textContent = 'Uploading…';
     try {
-      const body = await uploadFile('/api/templates', name.value.trim(), f);
-      toast(body.placeholdersFound ? `Design uploaded: ${body.placeholdersFound} placeholders found. Check what each is replaced by.` : 'Design uploaded. Now place the details.');
-      go(`#/settings/templates/${body.template.id}`);
+      const up = await templateUpload(f, { maxPages: 1, maxBytes: designs.maxBytes, onConverting: (kind) => (submit.textContent = `Converting the ${kind} file…`) });
+      submit.textContent = 'Uploading…';
+      const body = await uploadFile('/api/templates', name.value.trim(), up.file, { source: up.source });
+      toast(body.placeholdersFound ? `Design uploaded: ${body.placeholdersFound} placeholders found. Map each one to a detail.` : 'Design uploaded. Now place the details.');
+      go(`#/settings/templates/${body.template.id}`); // the editor asks for the mapping straight away
     } catch (err) {
       showErrors(form, err);
     } finally {
@@ -290,7 +304,31 @@ export async function viewTemplateEditor(id, stale) {
     clearTimeout(timer);
     timer = setTimeout(refresh, 400);
   };
-  const mapper = placeholderMapper(layout.placeholders, { fieldOptions: designs.placeholderFields, fonts, fileType: t.fileType, rescanPath: `/api/templates/${id}/placeholders`, onChange: later });
+  let pending = mappingPending(layout);
+  const reopen = () => go(`#/settings/templates/${id}?r=${Date.now()}`);
+  // The mapping dialog; saving it saves the layout with the mapping confirmed.
+  const askMapping = async (list, isNew) => {
+    const saved = await mapPlaceholdersDialog(mappingRows(list, !pending, isNew), designs.placeholderFields, {
+      intro: 'Choose the detail each placeholder in your design is replaced by. Anything that is not really a placeholder can be left as printed. You can fine-tune size, font and colour afterwards.',
+      save: (mapped) => api('PATCH', `/api/templates/${id}`, { layout: { ...collect(), placeholders: mapped, placeholdersConfirmed: true } }),
+    });
+    if (saved) {
+      toast('Placeholders mapped');
+      reopen();
+    }
+    return saved;
+  };
+  const mapper = placeholderMapper(layout.placeholders, {
+    fieldOptions: designs.placeholderFields,
+    fonts,
+    fileType: t.fileType,
+    rescanPath: `/api/templates/${id}/placeholders`,
+    onChange: later,
+    onNew: (list, added, key) => {
+      pending = true;
+      askMapping(list, (m) => added.has(key(m)));
+    },
+  });
 
   const frame = h('iframe', { class: 'preview-frame', title: 'Certificate preview' });
   let currentUrl = null;
@@ -347,7 +385,7 @@ export async function viewTemplateEditor(id, stale) {
         prefix: i.prefix.value,
       };
     }
-    return { fields, placeholders: mapper.collect() };
+    return { fields, placeholders: mapper.collect(), placeholdersConfirmed: !pending };
   }
 
   const nameInput = h('input', { name: 'name', value: t.name, maxlength: '80' });
@@ -394,6 +432,11 @@ export async function viewTemplateEditor(id, stale) {
   );
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    // Placeholders are mapped (and confirmed) before anything else is saved.
+    if (pending) {
+      await askMapping(mapper.collect());
+      return;
+    }
     save.disabled = true;
     try {
       await api('PATCH', `/api/templates/${id}`, { name: nameInput.value, layout: collect() });
@@ -411,6 +454,15 @@ export async function viewTemplateEditor(id, stale) {
   // Errors for the placeholders and the positioned details are shown across both cards.
   const area = h('div', { class: 'stack' }, mapper.element, form);
   const used = t.usedBy.certificates;
+  const pendingNotice = pending
+    ? h(
+        'div',
+        { class: 'notice notice-warn' },
+        h('strong', null, `${layout.placeholders.length} placeholder${layout.placeholders.length === 1 ? '' : 's'} to map. `),
+        'This design cannot be the default or be used by a session until each placeholder is mapped to a detail. ',
+        h('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: () => askMapping(mapper.collect()) }, 'Map placeholders'),
+      )
+    : null;
   mount(
     t.name,
     h('div', { class: 'page-head' }, h('a', { class: 'btn btn-ghost btn-sm', href: '#/settings' }, '← Settings')),
@@ -421,21 +473,122 @@ export async function viewTemplateEditor(id, stale) {
       t.isDefault ? h('span', { class: 'badge', 'data-status': 'open' }, 'Default') : null,
       t.archived ? h('span', { class: 'badge', 'data-status': 'closed' }, 'Archived') : null,
       h('span', { class: 'spacer' }),
-      h('a', { class: 'btn btn-sm', href: `/api/templates/${id}/file`, download: '' }, 'Download original'),
+      h('a', { class: 'btn btn-sm', href: `/api/templates/${id}/file`, download: '' }, t.sourceType ? `Download (${fileKind(t)})` : 'Download original'),
     ),
+    pendingNotice,
     used ? h('div', { class: 'notice' }, `${used} issued ${used === 1 ? 'certificate uses' : 'certificates use'} this design. Saving a new layout changes how they look when downloaded again.`) : null,
     h('div', { class: 'stack' }, area, h('section', { class: 'card' }, h('h2', null, 'Preview (sample student)'), frame)),
   );
   refresh();
+  if (pending && can('certTemplates.edit')) askMapping(mapper.collect()); // straight after an upload
 }
 
 // ------------------------------------------------------------------ placeholders found in an uploaded template
+
+const NOT_A_PLACEHOLDER = '__none';
+
+/** True while a template's placeholders wait for someone to confirm what each one is (new uploads). */
+const mappingPending = (layout) => Boolean(layout && layout.placeholders && layout.placeholders.length && layout.placeholdersConfirmed === false);
+
+/** The file kinds templates can be uploaded as (Word and PowerPoint only when the server can convert them). */
+/** "PDF", or "PDF · converted from Word". */
+const fileKind = (t) => `${t.fileType.toUpperCase()}${t.sourceType ? ` · converted from ${OFFICE_KINDS[t.sourceType] || t.sourceType}` : ''}`;
+
+/**
+ * Ask what each placeholder found in an uploaded template is replaced by. Every one needs an answer: a field, or
+ * "not a placeholder". rows: [{ m: mapping, preset: fieldId | NOT_A_PLACEHOLDER | '' }]. save(mappings) stores
+ * them (throws an ApiError to show). Resolves to true once saved, false if closed.
+ */
+function mapPlaceholdersDialog(rows, fieldOptions, { save, intro }) {
+  return new Promise((resolve) => {
+    const dialog = h('dialog', { class: 'modal modal-wide', 'aria-labelledby': 'map-title' });
+    const close = (value) => {
+      dialog.close();
+      dialog.remove();
+      resolve(value);
+    };
+    const choices = [{ id: '', label: 'Choose…' }, ...fieldOptions, { id: NOT_A_PLACEHOLDER, label: 'Not a placeholder: leave it as printed' }];
+    const selects = rows.map((r, i) => {
+      const sel = selectEl(`placeholders.${i}.field`, choices, r.preset);
+      sel.setAttribute('aria-label', `What ${r.m.text} is replaced by`);
+      sel.addEventListener('change', () => sel.closest('tr').classList.toggle('unmapped', !sel.value));
+      return sel;
+    });
+    const table = h(
+      'div',
+      { class: 'table-wrap' },
+      h(
+        'table',
+        { class: 'stackable' },
+        h('thead', null, h('tr', null, ['Placeholder', 'Where', 'Replaced by'].map((t) => h('th', null, t)))),
+        h(
+          'tbody',
+          null,
+          rows.map((r, i) =>
+            h(
+              'tr',
+              { class: r.preset ? null : 'unmapped' },
+              h('td', { class: 'primary', 'data-label': 'Placeholder' }, h('span', { class: 'mono' }, r.m.text)),
+              h('td', { 'data-label': 'Where' }, `Page ${r.m.page + 1}`, r.m.line ? h('span', { class: 'sub' }, `“${r.m.line.text.length > 60 ? `${r.m.line.text.slice(0, 58)}…` : r.m.line.text}”`) : null),
+              h('td', { 'data-label': 'Replaced by' }, selects[i], h('small', { class: 'error', 'data-error-for': `placeholders.${i}.field` })),
+            ),
+          ),
+        ),
+      ),
+    );
+    const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save mapping');
+    const form = h(
+      'form',
+      { class: 'stack', novalidate: true },
+      h('h2', { id: 'map-title' }, `Map the ${rows.length} placeholder${rows.length === 1 ? '' : 's'} found`),
+      h('p', { class: 'muted' }, intro),
+      table,
+      h('p', { class: 'form-error', role: 'alert' }),
+      h('div', { class: 'form-actions' }, submit, h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => close(false) }, 'Later')),
+    );
+    form.addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      clearErrors(form);
+      const missing = selects.filter((sel) => !sel.value);
+      if (missing.length) {
+        for (const sel of missing) sel.closest('td').querySelector('.error').textContent = 'Choose what this is replaced by.';
+        form.querySelector('.form-error').textContent = `Choose what ${missing.length === 1 ? 'the highlighted placeholder is' : `the ${missing.length} highlighted placeholders are`} replaced by, or mark ${missing.length === 1 ? 'it' : 'them'} “not a placeholder”.`;
+        missing[0].focus();
+        return;
+      }
+      submit.disabled = true;
+      try {
+        await save(rows.map((r, i) => ({ ...r.m, field: selects[i].value === NOT_A_PLACEHOLDER ? null : selects[i].value })));
+        close(true);
+      } catch (err) {
+        showErrors(form, err);
+        submit.disabled = false;
+      }
+    });
+    dialog.addEventListener('cancel', (ev) => {
+      ev.preventDefault();
+      close(false);
+    });
+    dialog.append(form);
+    document.body.append(dialog);
+    dialog.showModal();
+    (selects.find((sel) => !sel.value) || submit).focus();
+  });
+}
+
+/**
+ * Rows for the mapping dialog: a placeholder's chosen field, or "not a placeholder" once someone has confirmed it;
+ * new (unconfirmed) placeholders without a suggestion are left for the user to choose.
+ */
+function mappingRows(list, confirmed, isNew = () => !confirmed) {
+  return list.map((m) => ({ m, preset: m.field ? m.field : isNew(m) ? '' : NOT_A_PLACEHOLDER }));
+}
 
 /**
  * The placeholders found in an uploaded PDF and what each is replaced by. Shared by certificate designs and
  * offer letter templates. Returns { element, collect() }. fieldOptions: [{ id, label }]; rescanPath: POST endpoint.
  */
-export function placeholderMapper(initial, { fieldOptions, fonts, fileType, rescanPath, onChange }) {
+export function placeholderMapper(initial, { fieldOptions, fonts, fileType, rescanPath, onChange, onNew }) {
   let list = structuredClone(initial || []);
   const body = h('tbody');
   const aligns = ['left', 'center', 'right'].map((a) => ({ id: a, label: a[0].toUpperCase() + a.slice(1) }));
@@ -494,13 +647,16 @@ export function placeholderMapper(initial, { fieldOptions, fonts, fileType, resc
     try {
       const r = await api('POST', rescanPath);
       // Keep what was chosen for placeholders that are still there.
-      const before = new Map(collect().map((m) => [`${m.page}|${m.text}|${Math.round(m.x)}|${Math.round(m.y)}`, m]));
-      list = r.placeholders.map((m) => before.get(`${m.page}|${m.text}|${Math.round(m.x)}|${Math.round(m.y)}`) || m);
+      const key = (m) => `${m.page}|${m.text}|${Math.round(m.x)}|${Math.round(m.y)}`;
+      const before = new Map(collect().map((m) => [key(m), m]));
+      list = r.placeholders.map((m) => before.get(key(m)) || m);
+      const added = r.placeholders.filter((m) => !before.has(key(m)));
       render();
       empty.hidden = list.length > 0;
       table.hidden = list.length === 0;
-      toast(`${list.length} placeholder${list.length === 1 ? '' : 's'} found`);
+      toast(`${list.length} placeholder${list.length === 1 ? '' : 's'} found${added.length ? `, ${added.length} new` : ''}`);
       onChange();
+      if (added.length && onNew) onNew(collect(), new Set(added.map(key)), key);
     } catch (err) {
       toast(errorText(err), true);
     }
@@ -620,12 +776,76 @@ export function coursesCard(courses, templates, reload) {
 
 // ------------------------------------------------------------------ offer letter templates
 
-async function uploadFile(path, name, file) {
-  const ext = (file.name.split('.').pop() || '').toLowerCase();
-  const type = file.type || { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg' }[ext] || 'application/octet-stream';
+// ------------------------------------------------------------------ template uploads
+
+const OFFICE_KINDS = { docx: 'Word', pptx: 'PowerPoint' };
+// Only files whose text can be searched for placeholders: PDF, and Word and PowerPoint (converted to PDF first).
+const UPLOAD_ACCEPT = [
+  '.pdf', '.docx', '.pptx', 'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+].join(',');
+const extOf = (file) => (String(file.name || '').split('.').pop() || '').toLowerCase();
+
+/**
+ * Turn the chosen file into the PDF to upload: a PDF as it is; Word and PowerPoint files converted in the browser
+ * (officeToPdf). Images and older Office files are refused here (and by the server). Resolves to { file, source }.
+ */
+async function templateUpload(file, { maxPages, maxBytes, onConverting }) {
+  const ext = extOf(file);
+  if (ext === 'pdf' || file.type === 'application/pdf') return { file, source: null };
+  if (OFFICE_KINDS[ext]) {
+    onConverting(OFFICE_KINDS[ext]);
+    const { pdf } = await officeToPdf(file, ext, { maxPages, maxBytes });
+    return { file: pdf, source: ext };
+  }
+  const why = /^image\//.test(file.type) || ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp', 'svg', 'tif', 'tiff'].includes(ext)
+    ? 'Images cannot be searched for placeholders, so they cannot be used as templates.'
+    : ['doc', 'ppt'].includes(ext)
+      ? 'This is an older Word or PowerPoint file: save it as .docx or .pptx (or PDF) first.'
+      : 'This kind of file cannot be used.';
+  throw new ApiError(400, { error: 'validation', fields: { file: `${why} Upload a PDF, Word (.docx) or PowerPoint (.pptx) file.` } });
+}
+
+/**
+ * Convert a Word or PowerPoint file to PDF in the browser: admin/convert/ (its own page, in a hidden frame, because
+ * the renderers need inline styles that this page's security policy refuses). Each page becomes a picture of the
+ * page with its text laid invisibly over it, so placeholders are found in it like in any PDF. Resolves to
+ * { pdf: Blob, pages }; rejects with a message for staff.
+ */
+function officeToPdf(file, kind, { maxPages = 10, maxBytes }) {
+  return new Promise((resolve, reject) => {
+    const id = newId();
+    const frame = h('iframe', { src: '/admin/convert/', title: 'Template converter', class: 'converter-frame', tabindex: '-1', 'aria-hidden': 'true' });
+    let timer = null;
+    const finish = (fn, value) => {
+      clearTimeout(timer);
+      window.removeEventListener('message', onMessage);
+      frame.remove();
+      fn(value);
+    };
+    async function onMessage(event) {
+      if (event.origin !== window.location.origin || event.source !== frame.contentWindow) return;
+      const m = event.data || {};
+      if (m.type === 'ready') {
+        const buffer = await file.arrayBuffer();
+        frame.contentWindow.postMessage({ type: 'convert', id, kind, buffer, maxPages, maxBytes }, window.location.origin, [buffer]);
+      } else if (m.id === id && m.type === 'result') finish(resolve, { pdf: new Blob([m.pdf], { type: 'application/pdf' }), pages: m.pages });
+      else if (m.id === id && m.type === 'error') finish(reject, new ApiError(400, { error: 'validation', fields: { file: m.message } }));
+    }
+    window.addEventListener('message', onMessage);
+    timer = setTimeout(() => finish(reject, new ApiError(400, { error: 'validation', fields: { file: 'Converting the file took too long. Save it as PDF and upload that.' } })), 120000);
+    document.body.append(frame);
+  });
+}
+
+/** POST a template PDF (raw body). source: 'docx' | 'pptx' when it was converted from one. */
+async function uploadFile(path, name, file, { source = null } = {}) {
   let res;
   try {
-    res = await fetch(`${path}?name=${encodeURIComponent(name)}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': type }, body: file });
+    const query = new URLSearchParams({ name });
+    if (source) query.set('source', source);
+    res = await fetch(`${path}?${query}`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/pdf' }, body: file });
   } catch {
     throw new ApiError(0, { error: 'network' });
   }
@@ -642,7 +862,11 @@ export function offerLettersCard(data, reload) {
       'div',
       { class: 'pad' },
       h('h2', null, 'Offer letter templates'),
-      h('p', { class: 'muted small' }, 'Every registration gets an offer letter when its slot is confirmed. A letter uses its course domain’s template, otherwise the default. Upload your letterhead (PDF, PNG or JPEG) or a complete letter with placeholders; new templates stay inactive until you have checked the preview and activated them.'),
+      h(
+        'p',
+        { class: 'muted small' },
+        'Offer letters are sent from a student’s profile once their fee is fully paid, with the internship start date entered then. A letter uses its course domain’s template, otherwise the default. Upload your letterhead or a complete letter with placeholders (PDF, Word or PowerPoint); you map each placeholder found, and new templates stay inactive until you have checked the preview and activated them.',
+      ),
     ),
   );
   const editable = can('offerTemplates.edit');
@@ -677,7 +901,9 @@ export function offerLettersCard(data, reload) {
     ),
     ...data.templates.map((t) => {
       const actions = h('div', { class: 'row' }, h('a', { class: 'btn btn-sm', href: `#/settings/offer-templates/${t.id}` }, editable ? 'Edit' : 'View'), h('button', { class: 'btn btn-sm', type: 'button', onclick: preview(t.id) }, 'Preview'));
-      if (editable) actions.append(h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: call('PATCH', `/api/offer-templates/${t.id}`, { active: !t.active }, t.active ? 'Template deactivated' : 'Template activated') }, t.active ? 'Deactivate' : 'Activate'));
+      const pendingMap = mappingPending(t.layout);
+      if (editable && pendingMap && !t.active) actions.append(h('a', { class: 'btn btn-sm btn-primary', href: `#/settings/offer-templates/${t.id}` }, 'Map placeholders'));
+      else if (editable) actions.append(h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: call('PATCH', `/api/offer-templates/${t.id}`, { active: !t.active }, t.active ? 'Template deactivated' : 'Template activated') }, t.active ? 'Deactivate' : 'Activate'));
       if (can('offerTemplates.delete') && !t.usedBy.letters && !t.usedBy.courses) {
         actions.append(
           h(
@@ -696,8 +922,8 @@ export function offerLettersCard(data, reload) {
         'tr',
         { class: t.active ? null : 'archived' },
         h('td', { class: 'primary', 'data-label': 'Template' }, h('a', { class: 'name', href: `#/settings/offer-templates/${t.id}` }, t.name), h('span', { class: 'sub' }, `Added ${fmtDateTime(t.createdAt)}${t.createdBy ? ` by ${t.createdBy.name}` : ''}`)),
-        td('Kind', t.fileType ? `${t.fileType.toUpperCase()} · ${fmtBytes(t.fileSize)}${t.body ? '' : ' · complete letter'}` : 'Text on the letterhead'),
-        td('Status', t.active ? 'Active' : h('span', { class: 'muted' }, 'Inactive')),
+        td('Kind', t.fileType ? `${fileKind(t)} · ${fmtBytes(t.fileSize)}${t.body ? '' : ' · complete letter'}` : 'Text on the letterhead'),
+        td('Status', t.active ? 'Active' : pendingMap ? h('span', { class: 'badge', 'data-status': 'verify' }, 'Placeholders to map') : h('span', { class: 'muted' }, 'Inactive')),
         td('Used by', used || h('span', { class: 'muted' }, 'Not used yet')),
         td('Default', t.isDefault ? defaultBadge() : editable && t.active ? h('button', { class: 'btn btn-sm', type: 'button', onclick: call('PUT', '/api/offer-templates/default', { id: t.id }, 'Default changed') }, 'Make default') : '—'),
         td('Actions', actions),
@@ -708,7 +934,7 @@ export function offerLettersCard(data, reload) {
 
   if (can('offerTemplates.create')) {
     const name = h('input', { name: 'name', maxlength: '80', placeholder: 'e.g. Internship offer 2026', required: true });
-    const file = h('input', { name: 'file', type: 'file', accept: '.pdf,.png,.jpg,.jpeg,application/pdf,image/png,image/jpeg' });
+    const file = h('input', { name: 'file', type: 'file', accept: UPLOAD_ACCEPT });
     const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Add template');
     const form = h(
       'form',
@@ -718,7 +944,10 @@ export function offerLettersCard(data, reload) {
         'div',
         { class: 'form-grid' },
         field('Name', name, { name: 'name', required: true }),
-        field('File (optional)', file, { name: 'file', hint: `Letterhead or complete letter: PDF, PNG or JPEG up to ${fmtBytes(data.maxBytes)}. Without a file, the template is text on the Sloka letterhead.` }),
+        field('File (optional)', file, {
+          name: 'file',
+          hint: `Letterhead or complete letter: PDF, Word (.docx) or PowerPoint (.pptx), up to ${fmtBytes(data.maxBytes)} (Word and PowerPoint files are converted to PDF in your browser first). Images cannot be used: they have no text to find placeholders in. Without a file, the template is text on the Sloka letterhead.`,
+        }),
       ),
       h('p', { class: 'form-error', role: 'alert' }),
       h('div', { class: 'form-actions' }, submit),
@@ -729,13 +958,19 @@ export function offerLettersCard(data, reload) {
       submit.disabled = true;
       try {
         const f = file.files[0];
-        const r = f ? await uploadFile('/api/offer-templates', name.value.trim(), f) : await api('POST', '/api/offer-templates/text', { name: name.value });
-        toast(r.placeholdersFound ? `Template added: ${r.placeholdersFound} placeholders found. Check what each is replaced by.` : 'Template added. Check it, then activate it.');
-        go(`#/settings/offer-templates/${r.template.id}`);
+        let r;
+        if (f) {
+          const up = await templateUpload(f, { maxPages: 10, maxBytes: data.maxBytes, onConverting: (kind) => (submit.textContent = `Converting the ${kind} file…`) });
+          submit.textContent = 'Uploading…';
+          r = await uploadFile('/api/offer-templates', name.value.trim(), up.file, { source: up.source });
+        } else r = await api('POST', '/api/offer-templates/text', { name: name.value });
+        toast(r.placeholdersFound ? `Template added: ${r.placeholdersFound} placeholders found. Map each one to a detail.` : 'Template added. Check it, then activate it.');
+        go(`#/settings/offer-templates/${r.template.id}`); // the editor asks for the mapping straight away
       } catch (err) {
         showErrors(form, err);
       } finally {
         submit.disabled = false;
+        submit.textContent = 'Add template';
       }
     });
     card.append(form);
@@ -819,8 +1054,32 @@ export async function viewOfferTemplateEditor(id, stale) {
     lineHeight: num('lineHeight', layout.lineHeight, 1, 2.5, 0.05),
   };
   lay.font.disabled = !editable;
+  const fieldOptions = data.fields.map((f) => ({ id: f.id, label: f.label }));
+  let pending = mappingPending(layout);
+  // The mapping dialog; saving it saves the template with the mapping confirmed.
+  const askMapping = async (list, isNew) => {
+    const saved = await mapPlaceholdersDialog(mappingRows(list, !pending, isNew), fieldOptions, {
+      intro: 'Choose the detail each placeholder in your letter is replaced by. Anything that is not really a placeholder can be left as printed. A complete letter needs one placeholder mapped to the student name.',
+      save: (mapped) => api('PATCH', `/api/offer-templates/${id}`, { body: bodyInput.value, layout: { ...collect(), placeholders: mapped, placeholdersConfirmed: true } }),
+    });
+    if (saved) {
+      toast('Placeholders mapped');
+      go(`#/settings/offer-templates/${id}?r=${Date.now()}`);
+    }
+    return saved;
+  };
   const mapper = t.fileType
-    ? placeholderMapper(layout.placeholders, { fieldOptions: data.fields.map((f) => ({ id: f.id, label: f.label })), fonts: data.fonts, fileType: t.fileType, rescanPath: `/api/offer-templates/${id}/placeholders`, onChange: later })
+    ? placeholderMapper(layout.placeholders, {
+        fieldOptions,
+        fonts: data.fonts,
+        fileType: t.fileType,
+        rescanPath: `/api/offer-templates/${id}/placeholders`,
+        onChange: later,
+        onNew: (list, added, key) => {
+          pending = true;
+          askMapping(list, (m) => added.has(key(m)));
+        },
+      })
     : null;
   function collect() {
     return {
@@ -830,6 +1089,7 @@ export async function viewOfferTemplateEditor(id, stale) {
       color: lay.color.value,
       lineHeight: Number(lay.lineHeight.value),
       placeholders: mapper ? mapper.collect() : [],
+      placeholdersConfirmed: !pending,
     };
   }
 
@@ -884,6 +1144,11 @@ export async function viewOfferTemplateEditor(id, stale) {
   );
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
+    // Placeholders are mapped (and confirmed) before anything else is saved.
+    if (pending && mapper) {
+      await askMapping(mapper.collect());
+      return;
+    }
     save.disabled = true;
     try {
       await api('PATCH', `/api/offer-templates/${id}`, { name: nameInput.value, body: bodyInput.value, layout: collect() });
@@ -907,6 +1172,8 @@ export async function viewOfferTemplateEditor(id, stale) {
         {
           class: t.active ? 'btn btn-ghost btn-sm' : 'btn btn-primary btn-sm',
           type: 'button',
+          disabled: !t.active && pending,
+          title: !t.active && pending ? 'Map the placeholders first' : null,
           onclick: async () => {
             try {
               await api('PATCH', `/api/offer-templates/${id}`, { active: !t.active });
@@ -930,11 +1197,21 @@ export async function viewOfferTemplateEditor(id, stale) {
       t.isDefault ? h('span', { class: 'badge', 'data-status': 'open' }, 'Default') : null,
       h('span', { class: 'badge', 'data-status': t.active ? 'open' : 'closed' }, t.active ? 'Active' : 'Inactive'),
       h('span', { class: 'spacer' }),
-      t.fileType ? h('a', { class: 'btn btn-sm', href: `/api/offer-templates/${id}/file`, download: '' }, 'Download original') : null,
+      t.fileType ? h('a', { class: 'btn btn-sm', href: `/api/offer-templates/${id}/file`, download: '' }, t.sourceType ? `Download (${fileKind(t)})` : 'Download original') : null,
       toggle,
     ),
+    pending
+      ? h(
+          'div',
+          { class: 'notice notice-warn' },
+          h('strong', null, `${layout.placeholders.length} placeholder${layout.placeholders.length === 1 ? '' : 's'} to map. `),
+          'This template cannot be activated until each placeholder is mapped to a detail. ',
+          editable ? h('button', { class: 'btn btn-sm btn-primary', type: 'button', onclick: () => askMapping(mapper.collect()) }, 'Map placeholders') : null,
+        )
+      : null,
     t.usedBy.letters ? h('div', { class: 'notice' }, `${t.usedBy.letters} offer ${t.usedBy.letters === 1 ? 'letter was' : 'letters were'} generated with this template. They keep the text they were generated with until regenerated.`) : null,
     form,
   );
   refresh();
+  if (pending && editable && mapper) askMapping(mapper.collect()); // straight after an upload
 }

@@ -478,6 +478,16 @@ const MIGRATIONS = [
       }
     },
   },
+  {
+    // Offer letters are issued once the fee is fully paid, with the internship start date the associate enters.
+    // Templates remember the kind of file uploaded (the portal converts Word and PowerPoint files to PDF).
+    version: 5,
+    statements: [
+      `ALTER TABLE offer_letters ADD COLUMN IF NOT EXISTS internship_start_date ${DAY}`,
+      'ALTER TABLE certificate_templates ADD COLUMN IF NOT EXISTS source_type VARCHAR(8)',
+      'ALTER TABLE offer_templates ADD COLUMN IF NOT EXISTS source_type VARCHAR(8)',
+    ],
+  },
 ];
 
 // The website's internship domains (sloka-academy-frontend/src/data/domains.ts) when the course master was added.

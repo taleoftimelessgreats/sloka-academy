@@ -1,7 +1,7 @@
 // Internship enquiries: list, detail, add.
 // Rendered with DOM APIs / textContent only. Never use innerHTML with data.
 
-import { addDays, api, can, ensureMeta, errorText, field, fmtDateTime, followUpCell, go, h, label, mount, selectEl, showErrors, staffOptions, state, statusBadge, toast, newId } from './core.js';
+import { addDays, api, can, ensureMeta, errorText, field, fmtDateTime, followUpCell, go, h, label, mount, selectEl, showErrors, staffFilterOptions, staffOptions, state, statusBadge, toast, newId } from './core.js';
 import { pipelineSummary } from './overview.js';
 import { verificationPanel } from './students.js';
 
@@ -28,7 +28,7 @@ export async function viewList(params, stale) {
 
   const search = h('input', { type: 'search', name: 'q', placeholder: 'Search name, phone, email, college', value: params.get('q') || '', 'aria-label': 'Search' });
   const sortValue = params.get('sort') ? `${params.get('sort')}:${params.get('dir') || (params.get('sort') === 'nextFollowUp' || params.get('sort') === 'name' ? 'asc' : 'desc')}` : 'createdAt:desc';
-  const assignees = [{ id: 'me', label: 'Assigned to me' }, { id: 'none', label: 'Unassigned' }, ...state.staff.map((s) => ({ id: s.id, label: s.active ? s.name : `${s.name} (inactive)` }))];
+  const assignees = [{ id: 'me', label: 'Assigned to me' }, { id: 'none', label: 'Unassigned' }, ...staffFilterOptions()];
   const withNone = (list) => [...list, { id: 'none', label: 'Not specified' }];
   const selects = [
     ['status', meta.statuses, 'All statuses'],

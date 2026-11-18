@@ -46,9 +46,9 @@ const MODULES = [
   { id: 'courses', label: 'Course master', actions: { view: 'See course domains', create: 'Add course domains', edit: 'Rename, retire and set durations' } },
   {
     id: 'students',
-    label: 'Student master',
+    label: 'Participant (student) data',
     actions: {
-      view: 'See the master student database and profiles',
+      view: "See participants' and students' personal details wherever they appear: the student master and profiles, certificate participants, session participant lists and exports",
       create: 'Settle profile verifications by linking or giving a new profile',
       edit: "Edit a student's master details (logged), or accept changed details",
       delete: 'Permanently erase a student and everything linked to them',
@@ -57,9 +57,9 @@ const MODULES = [
   },
   {
     id: 'enquiries',
-    label: 'Internship enquiries',
+    label: 'Enquiry data',
     actions: {
-      view: 'See enquiries',
+      view: 'See enquiries wherever they appear: the enquiries list and details, enquiries on student profiles, friends referred on certificates',
       create: 'Add phone and walk-in enquiries',
       edit: 'Work enquiries: status, follow-up, assignment, notes, details',
       delete: 'Permanently delete enquiries',
@@ -75,7 +75,7 @@ const MODULES = [
     id: 'certificates',
     label: 'Certificates',
     actions: {
-      view: 'See, download and re-send certificates',
+      view: 'See, download and re-send certificates (with Participant (student) data → View, which shows who they belong to)',
       edit: 'Revoke, reinstate, retry failed emails and correct printed details',
       delete: 'Permanently delete registrations',
       export: 'Download certificates as CSV',

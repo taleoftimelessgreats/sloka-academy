@@ -1,13 +1,20 @@
 'use strict';
 
 const express = require('express');
-const { inspectTemplateFile, TemplateFileError, FONTS } = require('../certificateTemplates');
+const { inspectTemplateFile, sourceTypeOf, mappingPending, TemplateFileError, FONTS } = require('../certificateTemplates');
 const { detectOfferPlaceholders, validateBody, validateOfferLayout, OFFER_FIELDS, DEFAULT_BODY, DEFAULT_LAYOUT } = require('../offerLetters');
 const { toMappings } = require('../placeholders');
 const { validateTemplateName, isWinAnsi } = require('../validation');
 const { validationError, HttpError } = require('../util');
 
-const UPLOAD_TYPES = ['application/pdf', 'image/png', 'image/jpeg'];
+// What the browser may label an upload. Only PDFs are accepted (the portal converts Word and PowerPoint files
+// first); the other types are read so that the file's own bytes can say why it was refused (certificateTemplates.js).
+const UPLOAD_TYPES = [
+  'application/pdf', 'image/png', 'image/jpeg', 'image/webp',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/octet-stream',
+];
 const MIME = { pdf: 'application/pdf', png: 'image/png', jpeg: 'image/jpeg' };
 const hasErrors = (o) => Object.keys(o).length > 0;
 
@@ -26,9 +33,10 @@ function checkComplete(body, layout, fileType, errors) {
 }
 
 /**
- * Offer letter templates: upload (PDF, PNG or JPEG background, as certificate designs) or text-only on the
- * built-in letterhead; the letter text with {{placeholders}}; placeholders found in an uploaded PDF and the
- * field each one is replaced by; preview with sample data; activate, set as default, assign to courses.
+ * Offer letter templates: upload (a PDF letterhead or complete letter; Word and PowerPoint files are converted to
+ * PDF by the portal) or text-only on the built-in letterhead; the letter text with {{placeholders}}; placeholders
+ * found in an uploaded document and the field each one is replaced by; preview with sample data; activate, set as
+ * default, assign to courses. A template whose placeholders have not been mapped yet cannot be activated.
  */
 function offerTemplatesRouter({ config, auth, templates, offerLetters, settings, audit }) {
   const router = express.Router();
@@ -55,13 +63,14 @@ function offerTemplatesRouter({ config, auth, templates, offerLetters, settings,
     });
   });
 
-  // Upload a background or a complete letter (raw PDF, PNG or JPEG; the name in the query string). Placeholders in
-  // a PDF's text are found and mapped; a letter with them gets no text of its own to start with. New templates are
-  // inactive until previewed and activated.
+  // Upload a letterhead or a complete letter (the raw PDF; the name, and `source`: docx | pptx when the portal
+  // converted it, in the query string). Placeholders in the document's text are found and suggested a field each; a
+  // letter with them gets no text of its own to start with. New templates are inactive until their placeholders are
+  // mapped and they have been previewed and activated.
   router.post('/', may('create'), upload, async (req, res) => {
     const { values, errors } = validateTemplateName(typeof req.query.name === 'string' ? req.query.name : '');
     if (hasErrors(errors)) throw validationError(errors);
-    if (!Buffer.isBuffer(req.body) || !req.body.length) throw validationError({ file: 'Choose a PDF, PNG or JPEG file.' });
+    if (!Buffer.isBuffer(req.body) || !req.body.length) throw validationError({ file: 'Choose a PDF, Word or PowerPoint file.' });
     let info;
     try {
       info = await inspectTemplateFile(req.body, { maxPages: 10 });
@@ -69,17 +78,19 @@ function offerTemplatesRouter({ config, auth, templates, offerLetters, settings,
       if (err instanceof TemplateFileError) throw validationError({ file: err.message });
       throw err;
     }
+    const sourceType = sourceTypeOf(req.query.source);
     const placeholders = toMappings(info.placeholders, OFFER_FIELDS, info.pageWidth);
     const t = await templates.create(
       {
         name: values.name,
         body: placeholders.length ? '' : DEFAULT_BODY,
-        layout: { ...DEFAULT_LAYOUT, margins: { ...DEFAULT_LAYOUT.margins }, placeholders },
-        upload: { file: req.body, fileType: info.fileType, pageWidth: info.pageWidth, pageHeight: info.pageHeight },
+        layout: { ...DEFAULT_LAYOUT, margins: { ...DEFAULT_LAYOUT.margins }, placeholders, placeholdersConfirmed: !placeholders.length },
+        upload: { file: req.body, fileType: info.fileType, sourceType, pageWidth: info.pageWidth, pageHeight: info.pageHeight },
       },
       req.user.id,
     );
-    await log(req, t.id, 'upload', `Uploaded offer letter template "${t.name}" (${info.fileType.toUpperCase()}, ${placeholders.length} placeholder${placeholders.length === 1 ? '' : 's'} found)`);
+    const kind = (sourceType || info.fileType).toUpperCase();
+    await log(req, t.id, 'upload', `Uploaded offer letter template "${t.name}" (${kind}, ${placeholders.length} placeholder${placeholders.length === 1 ? '' : 's'} found)`);
     res.status(201).json({ template: t, placeholdersFound: placeholders.length });
   });
 
@@ -103,6 +114,7 @@ function offerTemplatesRouter({ config, auth, templates, offerLetters, settings,
     if (raw === null) await templates.setDefault(null);
     else {
       const t = await load(parseId(raw));
+      if (mappingPending(t.layout)) throw validationError({ id: 'Map the placeholders found in this template before making it the default.' });
       await templates.setDefault(t.id);
       name = `"${t.name}"`;
     }
@@ -200,6 +212,9 @@ function offerTemplatesRouter({ config, auth, templates, offerLetters, settings,
     }
     if (!hasErrors(errors)) checkComplete(changes.body ?? before.body, changes.layout ?? before.layout, before.fileType, errors);
     if (changes.active === false && before.usedBy.courses) errors.active = 'Course domains use this template: assign them another one first.';
+    if (changes.active === true && !before.active && mappingPending(changes.layout ?? before.layout)) {
+      errors.active = 'Map the placeholders found in this template before activating it.';
+    }
     if (hasErrors(errors)) throw validationError(errors);
     const t = await templates.update(id, changes);
     const what = [

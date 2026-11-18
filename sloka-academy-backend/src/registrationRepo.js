@@ -3,6 +3,7 @@
 const C = require('./constants');
 const { nextStudentCode } = require('./studentIds');
 const { localDate, isValidDateString } = require('./util');
+const { registrationScope } = require('./scope');
 
 /**
  * Internship registrations made by the BD team: the course master, one enrollment per registration (linked to
@@ -131,9 +132,10 @@ function parseRegistrationFilters(query, { scopeIds = null, today = localDate() 
     }
     return v.trim();
   };
-  if (scopeIds) {
-    clauses.push('e.bd_associate_id IN (?)');
-    params.push(scopeIds);
+  const scope = registrationScope(scopeIds);
+  if (scope.sql) {
+    clauses.push(scope.sql);
+    params.push(...scope.params);
   }
   const q = str('q');
   if (q !== undefined) {
@@ -379,8 +381,7 @@ function createRegistrationRepo(db, config, { offerLetters, audit } = {}) {
         actorId, entity: 'enrollment', entityId: id, action: 'create',
         summary: `Registered ${row.student_name} for ${row.course_name}: fee ${inr(v.fee)}, token ${inr(v.tokenAmount)}`,
       });
-      // The slot is confirmed (token received): the offer letter is generated with it.
-      if (offerLetters) await offerLetters.generate(id, actorId);
+      // The offer letter is issued later, once the fee is fully paid (see routes/registrations.js).
       return id;
     });
   }
@@ -400,10 +401,70 @@ function createRegistrationRepo(db, config, { offerLetters, audit } = {}) {
 
   const exportRows = async (f) => (await db.all(`${SELECT} ${f.where} ${f.order}`, f.params)).map((r) => enrollmentToApi(r, f.today));
 
+  // Totals over a set of enrollments (alias e, offer letters l); the ? are the dates of insightDates().
+  const TOTALS = `COUNT(*) AS registrations,
+    COALESCE(SUM(e.fee_paise), 0) AS committed,
+    COALESCE(SUM(e.paid_paise), 0) AS collected,
+    COALESCE(SUM(CASE WHEN e.payment_status = 'fully-paid' THEN 1 ELSE 0 END), 0) AS fully_paid,
+    COALESCE(SUM(CASE WHEN e.payment_status = 'partially-paid' THEN 1 ELSE 0 END), 0) AS partially_paid,
+    COALESCE(SUM(CASE WHEN e.payment_status = 'slot-confirmed' THEN 1 ELSE 0 END), 0) AS slot_confirmed,
+    COALESCE(SUM(CASE WHEN e.paid_paise < e.fee_paise AND e.balance_due_date BETWEEN ? AND ? THEN 1 ELSE 0 END), 0) AS due_week,
+    COALESCE(SUM(CASE WHEN e.paid_paise < e.fee_paise AND e.balance_due_date < ? THEN 1 ELSE 0 END), 0) AS overdue,
+    COALESCE(SUM(CASE WHEN e.paid_paise < e.fee_paise AND e.balance_due_date < ? THEN e.fee_paise - e.paid_paise ELSE 0 END), 0) AS overdue_amount,
+    COALESCE(SUM(CASE WHEN l.id IS NOT NULL THEN 1 ELSE 0 END), 0) AS offer_letters,
+    COALESCE(SUM(CASE WHEN e.paid_paise >= e.fee_paise AND l.id IS NULL THEN 1 ELSE 0 END), 0) AS awaiting_offer`;
+  const insightDates = (today) => [today, addDays(today, 6), today, today];
+  const totalsToApi = (r) => ({
+    registrations: r.registrations,
+    committed: rupees(r.committed),
+    collected: rupees(r.collected),
+    outstanding: rupees(r.committed - r.collected),
+    collectionRate: r.committed ? Math.round((r.collected / r.committed) * 1000) / 10 : 0,
+    fullyPaid: r.fully_paid,
+    partiallyPaid: r.partially_paid,
+    slotConfirmed: r.slot_confirmed,
+    dueThisWeek: r.due_week,
+    overdue: r.overdue,
+    overdueAmount: rupees(r.overdue_amount),
+    offerLetters: r.offer_letters,
+    awaitingOfferLetter: r.awaiting_offer, // fully paid, no offer letter yet
+  });
+
+  /**
+   * Insights for the registrations that filters select (parseRegistrationFilters: the list's filters and the
+   * data scope), in total and per BD Associate, so they always match the list.
+   */
+  async function insights(f) {
+    const from = (joins) => `FROM enrollments e JOIN students st ON st.id = e.student_id LEFT JOIN offer_letters l ON l.enrollment_id = e.id ${joins} ${f.where}`;
+    const params = [...insightDates(f.today), ...f.params];
+    const [total, rows] = await Promise.all([
+      db.get(`SELECT ${TOTALS} ${from('')}`, params),
+      db.all(`SELECT e.bd_associate_id AS associate_id, b.name AS associate_name, ${TOTALS} ${from('LEFT JOIN users b ON b.id = e.bd_associate_id')}
+        GROUP BY e.bd_associate_id, b.name ORDER BY collected DESC, registrations DESC, b.name`, params),
+    ]);
+    return {
+      ...totalsToApi(total),
+      byAssociate: rows.map((r) => ({ associate: r.associate_id ? { id: r.associate_id, name: r.associate_name } : null, ...totalsToApi(r) })),
+    };
+  }
+
+  /** Payments received between two dates (inclusive) on the registrations that filters select. */
+  async function received(f, fromDate, toDate) {
+    const clauses = [fromDate && 'p.paid_on >= ?', toDate && 'p.paid_on <= ?'].filter(Boolean);
+    const r = await db.get(
+      `SELECT COALESCE(SUM(p.amount_paise), 0) AS amount, COUNT(*) AS payments
+      FROM payments p JOIN enrollments e ON e.id = p.enrollment_id JOIN students st ON st.id = e.student_id
+      ${f.where ? `${f.where} AND` : 'WHERE'} ${clauses.join(' AND ')}`,
+      [...f.params, ...[fromDate, toDate].filter(Boolean)],
+    );
+    return { amount: rupees(r.amount), payments: r.payments };
+  }
+
   /** Totals for the overview, within the scope. */
   async function stats(scopeIds, today = localDate()) {
-    const where = scopeIds ? 'WHERE e.bd_associate_id IN (?)' : '';
-    const params = scopeIds ? [scopeIds] : [];
+    const scope = registrationScope(scopeIds);
+    const where = scope.sql ? `WHERE ${scope.sql}` : '';
+    const params = scope.params;
     const r = await db.get(
       `SELECT COUNT(*) AS total,
         COALESCE(SUM(CASE WHEN e.registration_date >= ? THEN 1 ELSE 0 END), 0) AS this_month,
@@ -624,7 +685,7 @@ function createRegistrationRepo(db, config, { offerLetters, audit } = {}) {
     },
   };
 
-  return { courses, lookup, create, get, list, exportRows, stats, studentProfile, update, addPayment, updatePayment, removePayment, remove, payments, flags };
+  return { courses, lookup, create, get, list, exportRows, stats, insights, received, studentProfile, update, addPayment, updatePayment, removePayment, remove, payments, flags };
 }
 
 module.exports = { createRegistrationRepo, parseRegistrationFilters, RegistrationError, paymentStatus, rupees };

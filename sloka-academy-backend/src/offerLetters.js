@@ -4,11 +4,12 @@ const { renderOfferLetterPdf, A4, BUILT_IN_MARGINS } = require('./offerLetterPdf
 const { longDate } = require('./certificatePdf');
 const { isWinAnsi } = require('./validation');
 const { toMappings, validateMappings, extractPlaceholders } = require('./placeholders');
-const { localDate } = require('./util');
+const { localDate, isValidDateString, HttpError, validationError } = require('./util');
 
 /**
- * Internship offer letters: one per enrollment, generated when the slot is confirmed (token received) and
- * regenerated on request. A letter keeps a snapshot of what it says; its PDF is rendered from that on demand.
+ * Internship offer letters: one per enrollment, issued once the fee is fully paid, with the internship start date
+ * the associate enters, and regenerated on request. A letter keeps a snapshot of what it says; its PDF is rendered
+ * from that on demand.
  * Templates: the built-in letterhead with the default text, or uploaded ones (a background file and/or text),
  * set as the default or assigned to course domains.
  */
@@ -93,6 +94,7 @@ function validateOfferLayout(input, pages = 10) {
   const mapped = validateMappings(src.placeholders, FIELD_IDS, { pages });
   Object.assign(errors, mapped.errors);
   value.placeholders = mapped.value;
+  value.placeholdersConfirmed = src.placeholdersConfirmed !== false; // saving a layout confirms its mapping unless it says otherwise
   return Object.keys(errors).length ? { value: null, errors } : { value, errors };
 }
 
@@ -101,6 +103,7 @@ const templateToApi = (t) =>
     id: t.id,
     name: t.name,
     fileType: t.file_type ?? null,
+    sourceType: t.source_type ?? null, // docx | pptx: converted to PDF by the portal when uploaded
     fileSize: t.file_size ?? null,
     pageWidth: t.page_width,
     pageHeight: t.page_height,
@@ -151,9 +154,12 @@ function createOfferTemplateRepo(db) {
     const t = now();
     const id = await db.transaction(async () => {
       const r = await db.run(
-        `INSERT INTO offer_templates (name, file_type, file_size, page_width, page_height, body, layout, is_default, active, created_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
-        [name, upload ? upload.fileType : null, upload ? upload.file.length : null, upload ? upload.pageWidth : A4[0], upload ? upload.pageHeight : A4[1], body, JSON.stringify(layout), userId, t, t],
+        `INSERT INTO offer_templates (name, file_type, source_type, file_size, page_width, page_height, body, layout, is_default, active, created_by, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?)`,
+        [
+          name, upload ? upload.fileType : null, upload ? upload.sourceType ?? null : null, upload ? upload.file.length : null,
+          upload ? upload.pageWidth : A4[0], upload ? upload.pageHeight : A4[1], body, JSON.stringify(layout), userId, t, t,
+        ],
       );
       if (upload) {
         for (let part = 0, at = 0; at < upload.file.length; part++, at += FILE_PART_BYTES) {
@@ -231,6 +237,7 @@ const letterToApi = (l, events = []) =>
     enrollmentId: l.enrollment_id,
     template: l.template_id ? { id: l.template_id, name: l.template_name ?? null } : null,
     offerDate: l.offer_date,
+    internshipStartDate: l.internship_start_date ?? null,
     status: l.status,
     emailError: l.email_error ?? null,
     sentAt: l.sent_at ?? null,
@@ -238,6 +245,12 @@ const letterToApi = (l, events = []) =>
     generatedBy: l.generated_by ? { id: l.generated_by, name: l.generated_by_name ?? null } : null,
     events: events.map((e) => ({ type: e.type, detail: e.detail, actor: e.actor_id ? { id: e.actor_id, name: e.actor_name } : null, createdAt: e.created_at })),
   };
+
+/** 409: the letter waits for the balance (paise) to be paid. */
+function balanceDue(balancePaise) {
+  const balance = (balancePaise / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 });
+  return new HttpError(409, { error: 'balance_due', message: `The offer letter can be issued once the fee is fully paid. ₹${balance} is still due.` });
+}
 
 /**
  * Letters: generate (or regenerate) from an enrollment, render, email.
@@ -272,16 +285,19 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
 
   /**
    * Generate the enrollment's letter (or regenerate it: same ID, fresh contents and date, back to "Generated").
-   * Runs in the caller's transaction when there is one. Resolves to the letter.
+   * startDate (YYYY-MM-DD): the internship start date printed on it. Only once the fee is fully paid: otherwise
+   * throws HttpError 409 balance_due. Runs in the caller's transaction when there is one. Resolves to the letter.
    */
-  function generate(enrollmentId, actorId) {
+  function generate(enrollmentId, actorId, { startDate } = {}) {
+    if (!isValidDateString(startDate)) throw validationError({ startDate: 'Enter the internship start date.' });
     return db.transaction(async () => {
       const e = await db.get(
-        `SELECT e.id, e.course_id, e.batch_start_date, st.name, st.student_code, st.college, c.name AS course_name, c.duration
-        FROM enrollments e JOIN students st ON st.id = e.student_id JOIN courses c ON c.id = e.course_id WHERE e.id = ?`,
+        `SELECT e.id, e.course_id, e.fee_paise, e.paid_paise, st.name, st.student_code, st.college, c.name AS course_name, c.duration
+        FROM enrollments e JOIN students st ON st.id = e.student_id JOIN courses c ON c.id = e.course_id WHERE e.id = ? FOR UPDATE`,
         [enrollmentId],
       );
       if (!e) return null;
+      if (e.paid_paise < e.fee_paise) throw balanceDue(e.fee_paise - e.paid_paise);
       const existing = await db.get('SELECT id, offer_code FROM offer_letters WHERE enrollment_id = ? FOR UPDATE', [enrollmentId]);
       const today = localDate();
       const code = existing ? existing.offer_code : await nextCode(today);
@@ -292,7 +308,7 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
         student_id: e.student_code || '',
         course_domain: e.course_name,
         college_name: e.college || '',
-        internship_start_date: longDate(e.batch_start_date),
+        internship_start_date: longDate(startDate),
         internship_duration: e.duration,
         offer_date: longDate(today),
         offer_letter_id: code,
@@ -309,16 +325,17 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
       if (existing) {
         id = existing.id;
         await db.run(
-          "UPDATE offer_letters SET template_id = ?, content = ?, offer_date = ?, status = 'generated', email_error = NULL, generated_by = ?, generated_at = ?, updated_at = ? WHERE id = ?",
-          [template ? template.id : null, content, today, actorId, t, t, id],
+          `UPDATE offer_letters SET template_id = ?, content = ?, offer_date = ?, internship_start_date = ?, status = 'generated', email_error = NULL,
+            generated_by = ?, generated_at = ?, updated_at = ? WHERE id = ?`,
+          [template ? template.id : null, content, today, startDate, actorId, t, t, id],
         );
         await event(id, 'regenerated', `Regenerated${template ? ` with "${template.name}"` : ' with the built-in letterhead'}`, actorId);
       } else {
         id = (
           await db.run(
-            `INSERT INTO offer_letters (offer_code, enrollment_id, template_id, content, offer_date, status, generated_by, generated_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, 'generated', ?, ?, ?)`,
-            [code, enrollmentId, template ? template.id : null, content, today, actorId, t, t],
+            `INSERT INTO offer_letters (offer_code, enrollment_id, template_id, content, offer_date, internship_start_date, status, generated_by, generated_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, 'generated', ?, ?, ?)`,
+            [code, enrollmentId, template ? template.id : null, content, today, startDate, actorId, t, t],
           )
         ).insertId;
         await event(id, 'generated', `Generated${template ? ` with "${template.name}"` : ' with the built-in letterhead'}`, actorId);

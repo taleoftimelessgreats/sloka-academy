@@ -6,6 +6,7 @@ const { parseFilters } = require('../inquiryRepo');
 const { validateManualInquiry, validateInquiryUpdate, validateNote } = require('../validation');
 const { toCsv, nationalPhone } = require('../csv');
 const { localDate, localDateTime, validationError, HttpError } = require('../util');
+const { enquiryVisible } = require('../scope');
 
 const hasErrors = (o) => Object.keys(o).length > 0;
 
@@ -14,31 +15,45 @@ function parseId(raw) {
   return Number(raw);
 }
 
-/** Staff: internship enquiries (permissions enquiries.*). */
+/**
+ * Staff: internship enquiries (permissions enquiries.*), within the user's data scope: enquiries assigned to
+ * (or entered by) the associates it covers, and unassigned ones (see scope.js). Others are "not found".
+ */
 function inquiriesRouter({ db, repo, auth, verifications, audit }) {
   const router = express.Router();
-  const may = (action) => auth.requirePermission(`enquiries.${action}`);
+  // Every route shows enquiry data, so each needs Enquiry data → View as well as its own action.
+  const may = (action) => (action === 'view' ? auth.requirePermission('enquiries.view') : [auth.requirePermission('enquiries.view'), auth.requirePermission(`enquiries.${action}`)]);
+  const notFound = () => new HttpError(404, { error: 'not_found' });
 
-  async function checkAssignee(values, errors) {
+  // Enquiries can be assigned to active associates within the user's scope.
+  async function checkAssignee(req, values, errors) {
     if (values.assignedTo != null && !errors.assignedTo) {
       const user = await db.get('SELECT id FROM users WHERE id = ? AND active = 1', [values.assignedTo]);
-      if (!user) errors.assignedTo = 'Choose an active staff member.';
+      const scopeIds = await auth.scopeUserIds(req.user);
+      if (!user || (scopeIds && !scopeIds.includes(user.id))) errors.assignedTo = 'Choose an active staff member.';
     }
   }
 
-  function filtersOrThrow(req) {
-    const f = parseFilters(req.query, { userId: req.user.id, today: localDate() });
+  // The enquiry, if it is in the user's scope.
+  async function load(req, id) {
+    const inquiry = await repo.get(id);
+    if (!inquiry || !enquiryVisible(inquiry, await auth.scopeUserIds(req.user))) throw notFound();
+    return inquiry;
+  }
+
+  async function filtersOrThrow(req) {
+    const f = parseFilters(req.query, { userId: req.user.id, today: localDate(), scopeIds: await auth.scopeUserIds(req.user) });
     if (hasErrors(f.errors)) throw validationError(f.errors);
     return f;
   }
 
   router.get('/', may('view'), async (req, res) => {
-    res.json(await repo.list(filtersOrThrow(req)));
+    res.json(await repo.list(await filtersOrThrow(req)));
   });
 
   // Spreadsheet export; respects the same filters as the list (no pagination).
   router.get('/export', may('export'), async (req, res) => {
-    const filters = filtersOrThrow(req);
+    const filters = await filtersOrThrow(req);
     const { rows, notesByInquiry } = await repo.exportRows(filters);
     const header = [
       'ID', 'Created at', 'Name', 'Phone', 'Email', 'College', 'Stream', 'Year of study', 'Domain', 'Plan',
@@ -79,7 +94,7 @@ function inquiriesRouter({ db, repo, auth, verifications, audit }) {
   // Manual enquiry (phone call / walk-in) entered by staff.
   router.post('/', may('create'), async (req, res) => {
     const { values, errors } = validateManualInquiry(req.body);
-    await checkAssignee(values, errors);
+    await checkAssignee(req, values, errors);
     if (hasErrors(errors)) throw validationError(errors);
     const { id } = await repo.create(values, { createdBy: req.user.id });
     const [inquiry, notes, verification] = await Promise.all([repo.get(id), repo.notes(id), verifications.forRecord({ inquiryId: id })]);
@@ -88,15 +103,16 @@ function inquiriesRouter({ db, repo, auth, verifications, audit }) {
 
   router.get('/:id', may('view'), async (req, res) => {
     const id = parseId(req.params.id);
-    const [inquiry, notes, verification] = await Promise.all([repo.get(id), repo.notes(id), verifications.forRecord({ inquiryId: id })]);
-    if (!inquiry) throw new HttpError(404, { error: 'not_found' });
+    const inquiry = await load(req, id);
+    const [notes, verification] = await Promise.all([repo.notes(id), verifications.forRecord({ inquiryId: id })]);
     res.json({ inquiry, notes, verification });
   });
 
   router.patch('/:id', may('edit'), async (req, res) => {
     const id = parseId(req.params.id);
+    await load(req, id);
     const { values, errors } = validateInquiryUpdate(req.body);
-    await checkAssignee(values, errors);
+    await checkAssignee(req, values, errors);
     if (hasErrors(errors)) throw validationError(errors);
     const updated = await repo.update(id, values, {
       userId: req.user.id,
@@ -112,15 +128,15 @@ function inquiriesRouter({ db, repo, auth, verifications, audit }) {
     const id = parseId(req.params.id);
     const { values, errors } = validateNote(req.body);
     if (hasErrors(errors)) throw validationError(errors);
-    if (!(await repo.get(id))) throw new HttpError(404, { error: 'not_found' });
+    await load(req, id);
     res.status(201).json({ note: await repo.addNote(id, values.body, req.user.id) });
   });
 
   // Permanent erasure on request (enquiry + all notes).
   router.delete('/:id', may('delete'), async (req, res) => {
     const id = parseId(req.params.id);
-    const inquiry = await repo.get(id);
-    if (!inquiry || !(await repo.remove(id))) throw new HttpError(404, { error: 'not_found' });
+    const inquiry = await load(req, id);
+    if (!(await repo.remove(id))) throw notFound();
     await audit.log({ actorId: req.user.id, entity: 'enquiry', entityId: id, action: 'delete', summary: `Permanently deleted the enquiry of ${inquiry.name}` });
     res.status(204).end();
   });

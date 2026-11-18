@@ -207,7 +207,7 @@ export async function viewStudents(params, stale) {
           'div',
           { class: 'tags' },
           st.certificates ? programTag('career-guidance', `${st.certificates} ${st.certificates === 1 ? 'certificate' : 'certificates'}`) : null,
-          st.enquiries ? [programTag('internship'), statusBadge(st.latestEnquiryStatus)] : null,
+          st.enquiries ? [programTag('internship'), st.latestEnquiryStatus ? statusBadge(st.latestEnquiryStatus) : null] : null,
           st.registrations ? h('span', { class: 'badge', 'data-status': 'enrolled' }, `${st.registrations} internship ${st.registrations === 1 ? 'registration' : 'registrations'}`) : null,
           st.pendingVerifications ? h('span', { class: 'badge', 'data-status': 'verify' }, `${st.pendingVerifications} to verify`) : null,
           !st.certificates && !st.enquiries && !st.registrations && !st.pendingVerifications ? dash() : null,
@@ -264,6 +264,9 @@ export async function viewStudentDetail(id, stale) {
   const data = await api('GET', `/api/students/${id}`);
   if (stale()) return;
   const st = data.student;
+  // A student's enquiries come only with Enquiry data → View (null otherwise).
+  const seesEnquiries = data.enquiries !== null;
+  const enquiries = data.enquiries || [];
   const meta = state.meta;
   const reload = () => {
     const seq = state.seq;
@@ -303,7 +306,7 @@ export async function viewStudentDetail(id, stale) {
       sub: `Session ${fmtDate(r.session.sessionDate)} · ${r.certificateId}`,
       badge: certBadge(r.status),
     })),
-    ...data.enquiries.map((i) => ({
+    ...enquiries.map((i) => ({
       at: i.createdAt,
       program: 'internship',
       what: h('a', { href: `#/enquiries/${i.id}` }, `${label('source', i.source)} enquiry`),
@@ -363,8 +366,8 @@ export async function viewStudentDetail(id, stale) {
     h(
       'tbody',
       null,
-      data.enquiries.length
-        ? data.enquiries.map((i) =>
+      enquiries.length
+        ? enquiries.map((i) =>
             h(
               'tr',
               null,
@@ -437,8 +440,8 @@ export async function viewStudentDetail(id, stale) {
   if (can('students.delete')) {
     const del = h('button', { class: 'btn btn-danger', type: 'button' }, 'Delete student and all records');
     del.addEventListener('click', async () => {
-      const n = data.certificates.length + data.enquiries.length;
-      if (!window.confirm(`Permanently delete ${st.name}, ${data.certificates.length} certificate(s) and ${data.enquiries.length} enquiry(ies)?\n\nCertificates will no longer verify. Rows already copied to the Google Sheet must be deleted there separately. This cannot be undone.`)) return;
+      const n = data.certificates.length + (st.enquiries || 0);
+      if (!window.confirm(`Permanently delete ${st.name}, ${data.certificates.length} certificate(s) and ${st.enquiries || 0} enquiry(ies)?\n\nCertificates will no longer verify. Rows already copied to the Google Sheet must be deleted there separately. This cannot be undone.`)) return;
       try {
         await api('DELETE', `/api/students/${id}`);
         toast(`Deleted ${st.name} and ${n} linked ${n === 1 ? 'record' : 'records'}`);
@@ -466,7 +469,7 @@ export async function viewStudentDetail(id, stale) {
         h('section', { class: 'card' }, dl),
         historyCard,
         h('section', { class: 'card card-flush' }, h('h2', null, `Career guidance certificates (${data.certificates.length})`), h('div', { class: 'table-wrap' }, certTable)),
-        h('section', { class: 'card card-flush' }, h('h2', null, `Internship enquiries (${data.enquiries.length})`), h('div', { class: 'table-wrap' }, enquiryTable)),
+        seesEnquiries ? h('section', { class: 'card card-flush' }, h('h2', null, `Internship enquiries (${enquiries.length})`), h('div', { class: 'table-wrap' }, enquiryTable)) : null,
       ),
       h('div', { class: 'stack' }, side),
     ),

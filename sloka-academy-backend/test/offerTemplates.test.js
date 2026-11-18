@@ -8,6 +8,46 @@ const { startApp, addUser, login, client, referral, ALLOWED_ORIGIN } = require('
 const { suggestField } = require('../src/placeholders');
 const { OFFER_FIELDS } = require('../src/offerLetters');
 const { localDate } = require('../src/util');
+const PDFLib = require('pdf-lib');
+
+const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+/** Enough of an Office file (a ZIP naming its main part) to be recognised. */
+const fakeOffice = (part) => Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(26), Buffer.from(`[Content_Types].xml ${part} `), Buffer.alloc(200)]);
+const OLE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+
+/**
+ * A PDF made the way the portal converts a Word or PowerPoint file (public/admin/convert/convert.js): the page as a
+ * picture (here: a cream page with the text drawn in its colours), and each line of text laid invisibly over it, in
+ * a standard font squeezed to the width it has in the picture. lines: [text, x, baseline y, size, colour, bold].
+ */
+async function convertedPdf(lines, [W, H] = [595.28, 841.89]) {
+  const { createCanvas } = require('@napi-rs/canvas');
+  const k = 3;
+  const canvas = createCanvas(Math.round(W * k), Math.round(H * k));
+  const g = canvas.getContext('2d');
+  g.fillStyle = '#f5efe0';
+  g.fillRect(0, 0, canvas.width, canvas.height);
+  const widths = [];
+  for (const [text, x, y, size, colour, bold] of lines) {
+    g.font = `${bold ? 'bold ' : ''}${size * k}px serif`;
+    g.fillStyle = colour;
+    g.fillText(text, x * k, (H - y) * k);
+    widths.push(g.measureText(text).width / k);
+  }
+  const doc = await PDFLib.PDFDocument.create();
+  const page = doc.addPage([W, H]);
+  page.drawImage(await doc.embedJpg(await canvas.encode('jpeg', 90)), { x: 0, y: 0, width: W, height: H });
+  for (const [i, [text, x, y, size, , bold]] of lines.entries()) {
+    const font = await doc.embedFont(bold ? PDFLib.StandardFonts.TimesRomanBold : PDFLib.StandardFonts.TimesRoman);
+    const key = page.node.newFontDictionary(font.name, font.ref);
+    page.pushOperators(
+      PDFLib.pushGraphicsState(), PDFLib.beginText(), PDFLib.setFontAndSize(key, size), PDFLib.setTextRenderingMode(PDFLib.TextRenderingMode.Invisible),
+      PDFLib.setCharacterSqueeze((100 * widths[i]) / font.widthOfTextAtSize(text, size)), PDFLib.setTextMatrix(1, 0, 0, 1, x, y),
+      PDFLib.showText(font.encodeText(text)), PDFLib.endText(), PDFLib.popGraphicsState(),
+    );
+  }
+  return Buffer.from(await doc.save());
+}
 
 /** All the text of a PDF, as pdf.js reads it. */
 async function pdfText(bytes) {
@@ -61,7 +101,7 @@ function makePng(width, height) {
 }
 
 async function upload(ctx, cookie, path, name, bytes, type = 'application/pdf') {
-  const res = await fetch(`${ctx.base}${path}?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': type }, body: bytes });
+  const res = await fetch(`${ctx.base}${path}${path.includes('?') ? '&' : '?'}name=${encodeURIComponent(name)}`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': type }, body: bytes });
   return { status: res.status, data: await res.json() };
 }
 
@@ -123,8 +163,15 @@ describe('placeholders in uploaded templates', () => {
     assert.equal(rescan.data.searched, true);
     assert.equal(rescan.data.placeholders.length, 5);
 
+    // Until someone confirms what each placeholder is, the design cannot be used.
+    assert.equal(t.layout.placeholdersConfirmed, false);
+    assert.match((await api.put('/api/templates/default', { id: t.id })).data.fields.id, /Map the placeholders/);
+    const confirmed = await api.patch(`/api/templates/${t.id}`, { layout: { ...t.layout, placeholdersConfirmed: true } });
+    assert.equal(confirmed.status, 200, JSON.stringify(confirmed.data));
+    assert.equal(confirmed.data.template.layout.placeholdersConfirmed, true);
+
     // Issue a certificate on it: the details replace the placeholders.
-    await api.put('/api/templates/default', { id: t.id });
+    assert.equal((await api.put('/api/templates/default', { id: t.id })).status, 200);
     const s = (await api.post('/api/sessions', { title: 'Careers in VLSI', sessionDate: localDate(), mode: 'online' })).data.session;
     const reg = await fetch(`${ctx.base}/api/public/certificate-registrations`, {
       method: 'POST',
@@ -136,12 +183,23 @@ describe('placeholders in uploaded templates', () => {
     for (const v of ['Asha Kumar', 'Careers in VLSI', reg.certificate.id]) assert.ok(text.includes(v), v);
   });
 
-  test('images have no text layer: nothing to find, the default positions apply', async () => {
-    const r = await upload(ctx, cookie, '/api/templates', 'Image design', makePng(700, 500), 'image/png');
-    assert.equal(r.status, 201, JSON.stringify(r.data));
-    assert.equal(r.data.placeholdersFound, 0);
-    assert.equal(r.data.template.layout.fields.name.show, true);
-    assert.deepEqual((await api.post(`/api/templates/${r.data.template.id}/placeholders`)).data, { placeholders: [], searched: false });
+  test('only files whose text can be searched are accepted: images and unconverted Word/PowerPoint files are refused', async () => {
+    const { createCanvas } = require('@napi-rs/canvas');
+    const webp = await createCanvas(1200, 850).encode('webp', 90);
+    const jpeg = await createCanvas(1200, 850).encode('jpeg', 90);
+    for (const path of ['/api/templates', '/api/offer-templates']) {
+      for (const [bytes, type] of [[makePng(1200, 850), 'image/png'], [jpeg, 'image/jpeg'], [webp, 'image/webp']]) {
+        const r = await upload(ctx, cookie, path, 'Image', bytes, type);
+        assert.equal(r.status, 400, `${path} ${type}`);
+        assert.match(r.data.fields.file, /Images cannot be searched for placeholders/);
+      }
+      // Word and PowerPoint files are converted by the portal before they are uploaded.
+      const word = await upload(ctx, cookie, path, 'Word', fakeOffice('word/document.xml'), DOCX);
+      assert.match(word.data.fields.file, /converted to PDF by the portal/);
+      assert.match((await upload(ctx, cookie, path, 'Old', Buffer.concat([OLE, Buffer.alloc(64)]), 'application/octet-stream')).data.fields.file, /older Word or PowerPoint/);
+      assert.match((await upload(ctx, cookie, path, 'Sheet', fakeOffice('xl/workbook.xml'), 'application/octet-stream')).data.fields.file, /Upload a PDF, Word \(\.docx\) or PowerPoint/);
+    }
+    assert.equal((await api.get('/api/templates')).data.templates.length, 1, 'nothing more was stored');
   });
 
   test('offer letter templates: built-in by default; text-only and uploaded templates; inactive until activated', async () => {
@@ -182,6 +240,9 @@ describe('placeholders in uploaded templates', () => {
     const noName = doc.layout.placeholders.map((m) => ({ ...m, field: m.field === 'student_name' ? null : m.field }));
     assert.match((await api.patch(`/api/offer-templates/${doc.id}`, { layout: { ...doc.layout, placeholders: noName } })).data.fields.body, /map a placeholder of the document to the student name/);
 
+    assert.equal(doc.layout.placeholdersConfirmed, false);
+    assert.match((await api.patch(`/api/offer-templates/${doc.id}`, { active: true })).data.fields.active, /Map the placeholders/);
+    assert.equal((await api.patch(`/api/offer-templates/${doc.id}`, { layout: { ...doc.layout, placeholdersConfirmed: true } })).status, 200);
     const on = await api.patch(`/api/offer-templates/${doc.id}`, { active: true });
     assert.equal(on.data.template.active, true);
     ctx.docTemplate = doc;
@@ -209,17 +270,20 @@ describe('placeholders in uploaded templates', () => {
     };
     const a = await reg(ds.id, '9000044444', 'meena1@example.com');
     const b = await reg(aws.id, '9000055555', 'meena2@example.com');
+    const issue = async (id) => (await api.post(`/api/registrations/${id}/offer-letter/generate`, { startDate: localDate() })).data.offerLetter;
+    const letterA = await issue(a.id);
+    await issue(b.id);
     const letterText = async (id) => pdfText(Buffer.from(await (await fetch(`${ctx.base}/api/registrations/${id}/offer-letter/pdf`, { headers: { Cookie: cookie } })).arrayBuffer()));
 
     const docText = await letterText(a.id);
-    assert.ok(docText.includes('Meena Iyer') && docText.includes('Data Science') && docText.includes(a.offerLetter.offerLetterId), 'the course template, placeholders filled in');
+    assert.ok(docText.includes('Meena Iyer') && docText.includes('Data Science') && docText.includes(letterA.offerLetterId), 'the course template, placeholders filled in');
     const defText = await letterText(b.id);
     assert.ok(defText.includes('Welcome to') && defText.includes('AWS'), 'the default template');
     assert.equal((await api.get(`/api/registrations/${b.id}/offer-letter`)).data.offerLetter.template.name, 'Short letter');
 
     // Back to the built-in letterhead for new letters: the regenerated letter follows, with the signatory.
     await api.put('/api/offer-templates/default', { id: null });
-    await api.post(`/api/registrations/${b.id}/offer-letter/generate`);
+    await api.post(`/api/registrations/${b.id}/offer-letter/generate`, { startDate: localDate() });
     const builtIn = await letterText(b.id);
     for (const v of ['Offer of Internship', 'unpaid internship', 'Dr. Ravi Kumar', 'Director', 'Slifax Private Limited']) assert.ok(builtIn.includes(v), v);
 
@@ -227,5 +291,37 @@ describe('placeholders in uploaded templates', () => {
     assert.equal((await api.del(`/api/offer-templates/${ctx.docTemplate.id}`)).status, 409, "a course and a letter use it");
     const log = (await api.get('/api/audit?entity=offer_template')).data.items.map((i) => i.action);
     for (const action of ['upload', 'create', 'activate', 'set_default']) assert.ok(log.includes(action), action);
+  });
+
+  test('a Word letter converted by the portal: placeholders, their colours and the cover found in its text layer; filled in place', async () => {
+    const bytes = await convertedPdf([
+      ['OFFER OF INTERNSHIP', 190, 760, 20, '#b0121b', true],
+      ['Ref: <<Ref No>>', 60, 720, 11, '#1b1b20', false],
+      ['Date: {{Offer Date}}', 200, 720, 11, '#1b1b20', false],
+      ['Dear {{Student Name}},', 60, 680, 12, '#1b1b20', false],
+      ['You are offered an internship in [Course] starting {{Start Date}}.', 60, 660, 12, '#1b1b20', false],
+    ]);
+    const up = await upload(ctx, cookie, '/api/offer-templates?source=docx', 'Converted letter', bytes);
+    assert.equal(up.status, 201, JSON.stringify(up.data));
+    const t = up.data.template;
+    assert.equal(t.sourceType, 'docx');
+    assert.equal(t.fileType, 'pdf');
+    const byText = Object.fromEntries(t.layout.placeholders.map((m) => [m.text, m]));
+    assert.deepEqual(Object.keys(byText), ['<<Ref No>>', '{{Offer Date}}', '{{Student Name}}', '[Course]', '{{Start Date}}']);
+    assert.equal(byText['{{Student Name}}'].field, 'student_name');
+    assert.equal(byText['{{Student Name}}'].size, 12, 'the size of the text in the picture');
+    assert.equal(byText['{{Student Name}}'].align, 'left', 'left-aligned text (it starts at the margin, like the lines around it)');
+    assert.equal(byText['{{Student Name}}'].line.font, 'times', 'the words around it keep their font');
+    assert.match(byText['{{Student Name}}'].cover, /^#f[0-9a-f]e[0-9a-f]d[0-9a-f]$/, 'covered in the cream around it');
+    assert.match(byText['{{Student Name}}'].color, /^#[0-3][0-9a-f][0-3][0-9a-f][0-3][0-9a-f]$/, 'printed in the dark of the text');
+    assert.ok(byText['<<Ref No>>'].line.limit < 200, 'a value stops before the next text on its line ("Date:")');
+    assert.equal(t.layout.placeholdersConfirmed, false);
+    assert.equal((await api.patch(`/api/offer-templates/${t.id}`, { layout: { ...t.layout, placeholdersConfirmed: true } })).status, 200);
+    const preview = await fetch(`${ctx.base}/api/offer-templates/preview`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ templateId: t.id }) });
+    const text = await pdfText(Buffer.from(await preview.arrayBuffer()));
+    for (const v of ['Priya Sharma', 'Data Science', `SLK/OL/${new Date().getFullYear()}/0042`]) assert.ok(text.includes(v), v);
+    // Only 'docx' and 'pptx' are recorded as sources.
+    const plain = await upload(ctx, cookie, '/api/offer-templates?source=xlsx', 'Plain', bytes);
+    assert.equal(plain.data.template.sourceType, null);
   });
 });
