@@ -4,7 +4,7 @@ const { isDuplicate } = require('./db');
 const { linkStudent, pruneStudent: pruneProfile } = require('./studentMatch');
 const { openVerification, closeForRecord } = require('./profileVerification');
 const { generateSessionCode, generateCertificateId, newDownloadToken } = require('./certIds');
-const { localDate } = require('./util');
+const { localDate, escapeLike } = require('./util');
 
 const EVENT_TYPES = [
   'registered', 'downloaded', 'name_corrected', 'revoked', 'reinstated', 'emailed', 'link_rotated', 'email_failed', 'details_corrected',
@@ -71,8 +71,6 @@ const REG_SELECT = `
   FROM certificate_registrations r JOIN sessions s ON s.id = r.session_id
   LEFT JOIN certificate_templates t ON t.id = r.template_id
   LEFT JOIN students stu ON stu.id = r.student_id`;
-
-const escapeLike = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /** Parse list/export filters for registrations. Returns { errors, where, params, page, pageSize }. */
 function parseRegFilters(query) {

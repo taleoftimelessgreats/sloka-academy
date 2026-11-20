@@ -1,12 +1,7 @@
 'use strict';
 
 const express = require('express');
-const { HttpError, validationError } = require('../util');
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
+const { HttpError, validationError, parseId } = require('../util');
 
 // Who may settle a verification: keeping the profile as it is, or giving the person a profile of their
 // own (students.create); accepting the submitted details changes a student's master record (students.edit).

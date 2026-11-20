@@ -193,22 +193,62 @@ function createNotifier(config, { logger = console, quota = null, transport = nu
       await send({ from: config.notifyFrom, to: a.to, subject, text });
     },
 
+    /**
+     * The updated invoice after a payment, as a PDF attachment. i: { to, name, programme, invoiceNumber, fee, paid,
+     * balance, fullyPaid, dueDate, policy: [clauses], termsUrl, pdf }
+     */
+    async sendInvoice(i) {
+      if (!smtpReady) throw new Error('Email is not configured on the server.');
+      const text = [
+        `Dear ${i.name},`,
+        '',
+        `Thank you for your payment. Your updated invoice (${i.invoiceNumber}) for the ${i.programme} is attached to this email as a PDF, with your full payment history.`,
+        '',
+        `Programme fee: ${i.fee}`,
+        `Total amount paid: ${i.paid}`,
+        `Outstanding balance: ${i.balance}${i.fullyPaid ? ' (paid in full)' : i.dueDate ? ` (due by ${i.dueDate})` : ''}`,
+        '',
+        ...i.policy,
+        `Terms & Conditions: ${i.termsUrl}`,
+        '',
+        'If anything on the invoice is not right, please reply to this email.',
+        '',
+        'Warm regards,',
+        'Sloka Academy',
+      ].join('\n');
+      await send({
+        from: config.notifyFrom,
+        to: i.to,
+        subject: `Your Sloka Academy invoice ${i.invoiceNumber}: ${i.fullyPaid ? 'paid in full' : `balance ${i.balance}`}`,
+        text,
+        attachments: [{ filename: `Invoice-${i.invoiceNumber.replace(/\//g, '-')}.pdf`, content: i.pdf, contentType: 'application/pdf' }],
+      });
+    },
+
     /** The internship offer letter, as a PDF attachment. o: { to, name, courseDomain, offerLetterId, pdf } */
     async sendOfferLetter(o) {
       if (!smtpReady) throw new Error('Email is not configured on the server.');
       const text = [
-        `Hi ${o.name},`,
+        `Dear ${o.name},`,
         '',
-        `Welcome to Sloka Academy. Your offer letter for the internship in ${o.courseDomain} is attached to this email as a PDF.`,
+        `Congratulations! We are delighted to offer you an internship in ${o.courseDomain} at Sloka Academy${o.startDate ? `, commencing on ${o.startDate}` : ''}.`,
         '',
-        `Offer letter ID: ${o.offerLetterId}`,
+        `Your offer letter (Ref. ${o.offerLetterId}) is attached to this email as a PDF. Please read it carefully${o.hrEmail ? ` and confirm your acceptance by writing to ${o.hrEmail}, quoting the reference number` : ''}.`,
         '',
+        'We look forward to welcoming you.',
+        '',
+        ...(o.policy || []),
+        ...(o.termsUrl ? [`Terms & Conditions: ${o.termsUrl}`] : []),
+        '',
+        'Warm regards,',
+        ...(o.signatory ? [o.signatory] : []),
+        ...(o.designation ? [o.designation] : []),
         'Sloka Academy',
       ].join('\n');
       await send({
         from: config.notifyFrom,
         to: o.to,
-        subject: `Your Sloka Academy internship offer letter (${o.offerLetterId})`,
+        subject: `Your offer letter: internship in ${o.courseDomain}, Sloka Academy (${o.offerLetterId})`,
         text,
         attachments: [{ filename: `Offer-Letter-${o.offerLetterId.replace(/\//g, '-')}.pdf`, content: o.pdf, contentType: 'application/pdf' }],
       });

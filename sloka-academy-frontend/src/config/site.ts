@@ -156,10 +156,16 @@ export const certificateLinks = [
 ] as const;
 
 export const policyLinks = [
-  { href: "/privacy/", label: "Privacy Notice" },
-  { href: "/terms/", label: "Terms of Use" },
-  { href: "/refund-policy/", label: "Payment, Cancellation & Refund" },
+  { href: "/privacy/", label: "Privacy Policy" },
+  { href: "/terms/", label: "Terms & Conditions" },
+  { href: "/refund-policy/", label: "Payment & Refund Policy" },
 ] as const;
+
+/**
+ * The payment policy, word for word wherever payments are mentioned (the same clauses are printed on invoices,
+ * offer letters and emails: sloka-academy-backend/src/constants.js PAYMENT_POLICY).
+ */
+export const paymentPolicy = ["All payments are non-refundable.", "Payments are collected exclusively for training purposes."] as const;
 
 /** Prefilled email to admissions, used where the enquiry forms are not available. */
 export const enquiryMailto = (subject: string) =>

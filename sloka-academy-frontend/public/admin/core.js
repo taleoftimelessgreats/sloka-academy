@@ -159,7 +159,7 @@ export const state = {
   seq: 0,
 };
 
-export function browserToday() {
+function browserToday() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
@@ -220,7 +220,7 @@ export async function ensureMeta(force = false) {
 export const can = (permission) => Boolean(state.me && state.me.permissions && state.me.permissions.includes(permission));
 // Any one of the permissions; 'a+b' needs both (e.g. certificates also show participants' personal data).
 export const canAny = (...permissions) => permissions.some((p) => p.split('+').every(can));
-export const isClosed = (status) => state.meta && state.meta.closedStatuses.includes(status);
+const isClosed = (status) => state.meta && state.meta.closedStatuses.includes(status);
 
 export function statusBadge(status) {
   return h('span', { class: 'badge', 'data-status': status }, label('status', status));
@@ -296,7 +296,7 @@ export function renderChrome() {
   });
 }
 
-export async function copyText(text) {
+async function copyText(text) {
   try {
     await navigator.clipboard.writeText(text);
     toast('Copied');

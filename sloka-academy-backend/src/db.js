@@ -488,6 +488,18 @@ const MIGRATIONS = [
       'ALTER TABLE offer_templates ADD COLUMN IF NOT EXISTS source_type VARCHAR(8)',
     ],
   },
+  {
+    // Invoices: each registration has an invoice number (SLK/INV/2026/0001); the updated invoice is emailed after
+    // every payment (invoices.js).
+    version: 6,
+    statements: [
+      'ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS invoice_code VARCHAR(40)',
+      'ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS invoice_status VARCHAR(10)', // sent | failed (the last email)
+      'ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS invoice_error TEXT',
+      `ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS invoice_sent_at ${TS}`,
+      'CREATE UNIQUE INDEX IF NOT EXISTS uq_enrollments_invoice ON enrollments (invoice_code)',
+    ],
+  },
 ];
 
 // The website's internship domains (sloka-academy-frontend/src/data/domains.ts) when the course master was added.

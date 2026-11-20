@@ -5,15 +5,8 @@ const C = require('../constants');
 const { parseStudentFilters } = require('../studentRepo');
 const { validateStudentUpdate } = require('../validation');
 const { toCsv, nationalPhone } = require('../csv');
-const { localDate, localDateTime, validationError, HttpError } = require('../util');
+const { localDate, localDateTime, validationError, HttpError, parseId, hasErrors } = require('../util');
 const { diff } = require('../audit');
-
-const hasErrors = (o) => Object.keys(o).length > 0;
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
 
 const LABELS = {
   name: 'Name', email: 'Email', phone: 'Mobile number', college: 'College', stream: 'Stream', yearOfStudy: 'Year of study', gender: 'Gender',

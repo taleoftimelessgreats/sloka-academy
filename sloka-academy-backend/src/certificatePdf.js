@@ -345,4 +345,4 @@ function certificateData(r) {
   };
 }
 
-module.exports = { renderCertificatePdf, certificateData, longDate, verifyLink, printable, getLogo, drawStamp };
+module.exports = { renderCertificatePdf, certificateData, longDate, verifyLink, printable, drawStamp };

@@ -2,16 +2,9 @@
 
 const express = require('express');
 const { validateCourse } = require('../validation');
-const { validationError, HttpError } = require('../util');
+const { validationError, HttpError, parseId, hasErrors } = require('../util');
 const { diff } = require('../audit');
 const { isDuplicate } = require('../db');
-
-const hasErrors = (o) => Object.keys(o).length > 0;
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
 
 const LABELS = { name: 'Course domain', duration: 'Internship duration', active: 'Active', offerTemplateId: 'Offer letter template' };
 

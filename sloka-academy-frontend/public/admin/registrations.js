@@ -4,7 +4,7 @@
 // Rendered with DOM APIs / textContent only. Never use innerHTML with data.
 
 import {
-  addDays, api, can, clearErrors, ensureMeta, errorText, field, fieldMessage, fmtDate, fmtDateTime, fmtMoney, go, h, label, mount, newId, pagerEl,
+  addDays, api, can, canAny, clearErrors, ensureMeta, errorText, field, fieldMessage, fmtDate, fmtDateTime, fmtMoney, go, h, label, mount, newId, pagerEl,
   selectEl, showErrors, staffFilterOptions, staffOptions, state, toast,
 } from './core.js';
 
@@ -18,7 +18,7 @@ const VIEWS = [
 const courseList = async () => (await api('GET', '/api/courses')).courses;
 
 /** Payment status, with the Overdue flag on top. */
-export function paymentBadge(e) {
+function paymentBadge(e) {
   return h(
     'span',
     { class: 'tags' },
@@ -26,6 +26,17 @@ export function paymentBadge(e) {
     e.overdue ? h('span', { class: 'badge', 'data-status': 'overdue' }, 'Overdue') : null,
   );
 }
+
+/** What happened to the invoice email after a registration or payment ('sent' | 'failed' | 'off'), for a toast. */
+const invoiceNote = (r) =>
+  r.invoiceEmail === 'sent'
+    ? ' The updated invoice was emailed to the student.'
+    : r.invoiceEmail === 'failed'
+      ? ` The invoice could not be emailed${r.registration.invoice && r.registration.invoice.error ? ` (${r.registration.invoice.error})` : ''}: send it from the profile.`
+      : ' Email is not set up: download the invoice from the profile.';
+
+/** The payment policy, as shown wherever a payment is taken. */
+const policyNote = () => h('p', { class: 'muted small policy-note' }, h('strong', null, 'Payment policy: '), (state.meta.paymentPolicy || []).join(' '), ' Tell the student before taking a payment.');
 
 const OFFER_STATUS = { generated: 'Generated', sent: 'Sent', failed: 'Failed' };
 const offerBadge = (status) => h('span', { class: 'badge', 'data-status': `offer-${status}` }, OFFER_STATUS[status] || status);
@@ -623,7 +634,8 @@ export async function viewRegistrationForm(stale) {
           : h('div', { class: 'field' }, h('span', { class: 'label' }, 'BD Associate'), h('output', { class: 'readonly' }, state.me.name)),
         field('Remarks', en.remarks, { full: true }),
       ),
-      can('offerLetters.view') ? h('p', { class: 'muted small' }, 'The offer letter is issued from the student’s profile once the fee is fully paid.') : null,
+      policyNote(),
+      h('p', { class: 'muted small' }, 'The student is emailed an invoice now and an updated one after every payment.', can('offerLetters.view') ? ' The offer letter is issued from their profile once the fee is fully paid.' : ''),
     ),
     h('p', { class: 'form-error', role: 'alert' }),
     h('div', { class: 'form-actions' }, submit, h('a', { class: 'btn btn-ghost', href: '#/registrations' }, 'Cancel')),
@@ -648,7 +660,7 @@ export async function viewRegistrationForm(stale) {
     submit.disabled = true;
     try {
       const r = await api('POST', '/api/registrations', body);
-      toast(r.registration.balance > 0 ? 'Registered. The offer letter can be sent once the balance is paid.' : 'Registered. Fully paid: send the offer letter from the profile.');
+      toast(`Registered.${invoiceNote(r)}`, r.invoiceEmail === 'failed');
       go(`#/registrations/students/${r.registration.student.id}?e=${r.registration.id}`);
     } catch (err) {
       if (err.status === 409 && err.data.error === 'student_exists') {
@@ -810,6 +822,7 @@ function enrollmentCard(e, { reload, focus }) {
         field('Paid on', pf.paidOn),
         field('Next balance due date', pf.balanceDueDate, { hint: 'If a balance remains after this payment.' }),
       ),
+      policyNote(),
       h('p', { class: 'form-error', role: 'alert' }),
       h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Record payment')),
     );
@@ -823,13 +836,59 @@ function enrollmentCard(e, { reload, focus }) {
           paidOn: pf.paidOn.value || null,
           balanceDueDate: pf.balanceDueDate.value || null,
         });
-        toast(`Payment recorded: ${label('paymentStatus', r.registration.paymentStatus)}`);
+        toast(`Payment recorded: ${label('paymentStatus', r.registration.paymentStatus)}.${invoiceNote(r)}`, r.invoiceEmail === 'failed');
         reload(e.id);
       } catch (err) {
         showErrors(payForm, err);
       }
     });
   }
+
+  // ---- invoice: always up to date with the ledger; emailed by itself after a payment
+  const inv = e.invoice;
+  const invoicePath = `/api/registrations/${e.id}/invoice/pdf`;
+  const invoiceButtons = [h('a', { class: 'btn', href: invoicePath, download: '' }, 'Download invoice'), h('a', { class: 'btn', href: `${invoicePath}?inline=1`, target: '_blank', rel: 'noopener' }, 'Open')];
+  if (canAny('payments.create', 'registrations.create', 'registrations.edit')) {
+    const emailOn = state.meta.emailEnabled && Boolean(e.student.email);
+    const sendInvoice = h(
+      'button',
+      { class: 'btn', type: 'button', disabled: !emailOn, title: emailOn ? null : 'Email is not set up, or the student has no email address: download the invoice and send it yourself.' },
+      inv && inv.status === 'sent' ? 'Email invoice again' : 'Email invoice',
+    );
+    sendInvoice.addEventListener('click', async () => {
+      sendInvoice.disabled = true;
+      try {
+        const r = await api('POST', `/api/registrations/${e.id}/invoice/send`);
+        toast(r.invoiceEmail === 'sent' ? 'Invoice emailed' : `Not sent: ${(r.registration.invoice && r.registration.invoice.error) || 'unknown error'}`, r.invoiceEmail !== 'sent');
+        reload(e.id);
+      } catch (err) {
+        toast(errorText(err), true);
+        sendInvoice.disabled = false;
+      }
+    });
+    invoiceButtons.push(sendInvoice);
+  }
+  const invoiceSection = h(
+    'div',
+    { class: 'subform' },
+    h(
+      'h3',
+      null,
+      'Invoice ',
+      inv ? h('span', { class: 'mono' }, inv.invoiceNumber) : null,
+      ' ',
+      inv && inv.status ? h('span', { class: 'badge', 'data-status': `offer-${inv.status}` }, inv.status === 'sent' ? 'Emailed' : 'Email failed') : h('span', { class: 'muted' }, 'not emailed yet'),
+    ),
+    h(
+      'p',
+      { class: 'muted small' },
+      `Payment history, ${fmtMoney(e.paid)} paid, ${fmtMoney(e.balance)} outstanding. It is emailed to the student after every payment`,
+      inv && inv.sentAt ? ` (last emailed ${fmtDateTime(inv.sentAt)})` : '',
+      '. After correcting a payment, email it again from here.',
+    ),
+    inv && inv.status === 'failed' ? h('p', { class: 'error-text' }, `Email failed: ${inv.error}`) : null,
+    h('div', { class: 'row' }, invoiceButtons),
+  );
 
   // ---- offer letter
   let offerSection = null;
@@ -945,6 +1004,7 @@ function enrollmentCard(e, { reload, focus }) {
     h('h3', null, 'Payment ledger'),
     h('div', { class: 'table-wrap' }, ledger),
     payForm,
+    invoiceSection,
     offerSection,
   );
 }

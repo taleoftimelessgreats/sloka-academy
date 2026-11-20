@@ -2,12 +2,10 @@
 
 const express = require('express');
 const { validateRole } = require('../validation');
-const { validationError, HttpError } = require('../util');
+const { validationError, HttpError, hasErrors } = require('../util');
 const { catalogue, SUPER_ADMIN, ALL_PERMISSIONS } = require('../permissions');
 const { isDuplicate } = require('../db');
 const { ENTITIES } = require('../audit');
-
-const hasErrors = (o) => Object.keys(o).length > 0;
 
 const roleToApi = (r, permissions) => ({
   key: r.role_key,

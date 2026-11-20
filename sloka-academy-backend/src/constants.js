@@ -99,6 +99,10 @@ const PAYMENT_MODES = [
 
 // An enrollment's payment status follows its payments (registrationRepo.js). Overdue is a flag on top:
 // the balance due date has passed and a balance remains.
+// The payment policy, word for word on invoices, offer letters, emails, the portal and the website
+// (sloka-academy-frontend/src/config/site.ts paymentPolicy).
+const PAYMENT_POLICY = ['All payments are non-refundable.', 'Payments are collected exclusively for training purposes.'];
+
 const PAYMENT_STATUSES = [
   ['slot-confirmed', 'Slot Confirmed'],
   ['partially-paid', 'Partially Paid'],
@@ -146,6 +150,7 @@ module.exports = {
   GENDER_IDS: ids(GENDERS),
   PAYMENT_MODE_IDS: ids(PAYMENT_MODES),
   PAYMENT_STATUS_IDS: ids(PAYMENT_STATUSES),
+  PAYMENT_POLICY,
   PUBLIC_SOURCES,
   MANUAL_SOURCES,
   CLOSED_STATUSES,
@@ -163,6 +168,7 @@ module.exports = {
       genders: toOptions(GENDERS),
       paymentModes: toOptions(PAYMENT_MODES),
       paymentStatuses: toOptions(PAYMENT_STATUSES),
+      paymentPolicy: PAYMENT_POLICY.slice(),
       programs: toOptions(PROGRAMS),
       profileFields: toOptions(PROFILE_FIELDS),
       closedStatuses: CLOSED_STATUSES.slice(),

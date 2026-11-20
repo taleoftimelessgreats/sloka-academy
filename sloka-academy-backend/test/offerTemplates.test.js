@@ -3,12 +3,13 @@
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const zlib = require('node:zlib');
-const { PDFDocument, StandardFonts } = require('pdf-lib');
 const { startApp, addUser, login, client, referral, ALLOWED_ORIGIN } = require('./helpers');
 const { suggestField } = require('../src/placeholders');
 const { OFFER_FIELDS } = require('../src/offerLetters');
 const { localDate } = require('../src/util');
 const PDFLib = require('pdf-lib');
+
+const { PDFDocument, StandardFonts } = PDFLib;
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 /** Enough of an Office file (a ZIP naming its main part) to be recognised. */
@@ -206,6 +207,7 @@ describe('placeholders in uploaded templates', () => {
     const list = (await api.get('/api/offer-templates')).data;
     assert.equal(list.builtInIsDefault, true);
     assert.match(list.builtIn.body, /\*\*unpaid internship\*\*/);
+    assert.match(list.builtIn.body, /All payments are non-refundable\. Payments are collected exclusively for training purposes\./);
     assert.deepEqual(list.fields.map((f) => f.placeholder).slice(0, 3), ['{{student_name}}', '{{student_id}}', '{{course_domain}}']);
     assert.equal((await bdApi.get('/api/offer-templates')).status, 403);
 
@@ -285,7 +287,30 @@ describe('placeholders in uploaded templates', () => {
     await api.put('/api/offer-templates/default', { id: null });
     await api.post(`/api/registrations/${b.id}/offer-letter/generate`, { startDate: localDate() });
     const builtIn = await letterText(b.id);
-    for (const v of ['Offer of Internship', 'unpaid internship', 'Dr. Ravi Kumar', 'Director', 'Slifax Private Limited']) assert.ok(builtIn.includes(v), v);
+    for (const v of [
+      'OFFER OF INTERNSHIP', 'unpaid internship', 'Dr. Ravi Kumar', 'Director', 'Slifax Private Limited',
+      // the letterhead: official address, HR email, the reference and date, page numbers
+      'Barakatpura, Hyderabad, Telangana 500027', 'hr@slokaacademy.com', 'Page 1 of 1', 'INTERNSHIP DETAILS', 'Meena Iyer',
+    ]) assert.ok(builtIn.includes(v), v);
+    assert.match(builtIn, /writing to\s+hr@slokaacademy\.com/, 'acceptance goes to HR');
+
+    // The letterhead's contacts are settings; new letters show the new ones, letters already issued keep theirs.
+    const bad = await api.put('/api/offer-templates/letterhead', { address: '', email: 'not-an-email', phone: 'call me' });
+    assert.equal(bad.status, 400);
+    assert.deepEqual(Object.keys(bad.data.fields).sort(), ['address', 'email', 'phone']);
+    assert.match((await api.put('/api/offer-templates/letterhead', { address: 'a\nb\nc\nd\ne', email: 'hr@slokaacademy.com' })).data.fields.address, /at most 4 lines/);
+    assert.equal((await bdApi.put('/api/offer-templates/letterhead', { address: 'x', email: 'a@b.co' })).status, 403);
+    const saved = await api.put('/api/offer-templates/letterhead', { address: ' Plot 7, Hitec City \r\n Hyderabad 500081 ', email: 'Careers@SlokaAcademy.com', phone: '+91 40 1234 5678' });
+    assert.equal(saved.status, 200, JSON.stringify(saved.data));
+    assert.deepEqual(saved.data.letterhead, { address: 'Plot 7, Hitec City\nHyderabad 500081', email: 'careers@slokaacademy.com', phone: '+91 40 1234 5678' });
+    assert.deepEqual((await api.get('/api/offer-templates')).data.letterhead, saved.data.letterhead);
+    const kept = await letterText(b.id);
+    assert.ok(kept.includes('Barakatpura') && !kept.includes('Hitec City'), 'an issued letter keeps its letterhead');
+    await api.post(`/api/registrations/${b.id}/offer-letter/generate`, { startDate: localDate() });
+    const renewed = await letterText(b.id);
+    for (const v of ['Plot 7, Hitec City', 'careers@slokaacademy.com', '+91 40 1234 5678']) assert.ok(renewed.includes(v), v);
+    assert.match(renewed, /writing to\s+careers@slokaacademy\.com/);
+    assert.ok((await api.get('/api/audit?entity=settings')).data.items.some((i) => i.summary === 'Changed the offer letter letterhead'));
 
     // Templates in use cannot be deleted; template changes are logged.
     assert.equal((await api.del(`/api/offer-templates/${ctx.docTemplate.id}`)).status, 409, "a course and a letter use it");

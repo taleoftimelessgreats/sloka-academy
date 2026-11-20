@@ -5,6 +5,7 @@ const { longDate } = require('./certificatePdf');
 const { isWinAnsi } = require('./validation');
 const { toMappings, validateMappings, extractPlaceholders } = require('./placeholders');
 const { localDate, isValidDateString, HttpError, validationError } = require('./util');
+const { PAYMENT_POLICY } = require('./constants');
 
 /**
  * Internship offer letters: one per enrollment, issued once the fee is fully paid, with the internship start date
@@ -26,33 +27,65 @@ const OFFER_FIELDS = [
   { id: 'offer_letter_id', label: 'Offer letter ID', aliases: ['offerid', 'letterid', 'offerletterno', 'referenceno', 'refno', 'reference', 'ref'] },
   { id: 'signatory_name', label: 'Signatory name', aliases: ['signatory', 'authorisedsignatory', 'authorizedsignatory', 'signedby'] },
   { id: 'signatory_designation', label: 'Signatory designation', aliases: ['designation', 'signatorytitle', 'title'] },
+  { id: 'hr_email', label: 'HR email', aliases: ['hremail', 'hrmail', 'hrcontact', 'hremailid'] },
 ];
 const FIELD_IDS = OFFER_FIELDS.map((f) => f.id);
 
-const DEFAULT_BODY = `**Subject: Offer of Internship – {{course_domain}}**
+const DEFAULT_BODY = `**PRIVATE & CONFIDENTIAL**
+
+**{{student_name}}**
+Student ID: {{student_id}}
+{{college_name}}
+
+# Offer of Internship
 
 Dear {{student_name}},
 
-We are pleased to offer you an internship with Sloka Academy in **{{course_domain}}**, starting {{internship_start_date}}, for a duration of {{internship_duration}}.
+We are delighted to offer you an internship with **Sloka Academy** in **{{course_domain}}**. Your selection reflects your academic background and your commitment to building practical, industry-ready skills, and we are pleased to welcome you to the programme.
 
-During the internship, you will work on a project assigned by your mentor. When you complete and submit the project, you will be awarded a **Certificate of Internship**.
+## Internship details
 
-Please note that this is an **unpaid internship**; no stipend or remuneration is payable.
+| Domain | {{course_domain}} |
+| Commencement date | {{internship_start_date}} |
+| Duration | {{internship_duration}} |
+| Nature of engagement | Unpaid internship |
+| On completion | Certificate of Internship |
 
-We look forward to working with you.
+## Your internship
 
-{{signatory_name}}
-{{signatory_designation}}
-Sloka Academy (a unit of Slifax Private Limited)
-Offer Letter ID: {{offer_letter_id}} | Date: {{offer_date}}`;
+Throughout the internship you will work on a structured project assigned by your mentor, applying what you learn to real-world problems under expert guidance. On successful completion and submission of the project, you will be awarded a **Certificate of Internship** by Sloka Academy.
+
+## Terms of this offer
+
+This is an **unpaid internship**: no stipend, salary or other remuneration is payable. **${PAYMENT_POLICY.join(' ')}** During the internship you are expected to follow the academy's guidelines, meet the timelines agreed with your mentor, and keep confidential any project material shared with you.
+
+Please confirm your acceptance of this offer by writing to **{{hr_email}}**, quoting the reference number above.
+
+We congratulate you on your selection and look forward to a rewarding association.
+
+Warm regards,
+For **Sloka Academy**
+
+---
+
+**{{signatory_name}}**
+{{signatory_designation}}`;
 
 const DEFAULT_LAYOUT = Object.freeze({
   margins: { ...BUILT_IN_MARGINS }, // percent of the page: the text area on an uploaded background (starts as the letterhead's)
   font: 'helvetica',
-  size: 11,
-  color: '#1b1b20',
-  lineHeight: 1.5,
+  size: 10,
+  color: '#2a2a31',
+  lineHeight: 1.45,
   placeholders: [],
+});
+
+// The letterhead of the built-in design: the academy's official address (its primary branch) and HR email,
+// changed in Settings → Offer letter templates.
+const LETTERHEAD_DEFAULTS = Object.freeze({
+  address: '3-4-493, Flat No. 502, Om Sri Maa Gayatri Plaza\nBarakatpura, Hyderabad, Telangana 500027',
+  email: 'hr@slokaacademy.com',
+  phone: '',
 });
 
 const num = (raw, min, max) => (typeof raw === 'number' && Number.isFinite(raw) && raw >= min && raw <= max ? Math.round(raw * 100) / 100 : null);
@@ -273,6 +306,18 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
     };
   }
 
+  /** The letterhead's contacts: { address (text, a line each), email, phone } from the settings, or the defaults. */
+  async function letterheadInfo() {
+    const s = await settings.all();
+    return {
+      address: s.offer_letterhead_address ?? LETTERHEAD_DEFAULTS.address,
+      email: s.offer_hr_email ?? LETTERHEAD_DEFAULTS.email,
+      phone: s.offer_letterhead_phone ?? LETTERHEAD_DEFAULTS.phone,
+    };
+  }
+  // As kept with a letter (and drawn on the built-in letterhead).
+  const forLetter = (info) => ({ address: info.address.split('\n').map((l) => l.trim()).filter(Boolean), email: info.email, phone: info.phone });
+
   /** Next SLK/OL/YYYY/0001 (counted per year, never reused). */
   async function nextCode(date) {
     const year = date.slice(0, 4);
@@ -303,6 +348,7 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
       const code = existing ? existing.offer_code : await nextCode(today);
       const template = await templates.forCourse(e.course_id);
       const sign = await signatory();
+      const head = await letterheadInfo();
       const values = {
         student_name: e.name,
         student_id: e.student_code || '',
@@ -314,11 +360,13 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
         offer_letter_id: code,
         signatory_name: sign.name,
         signatory_designation: sign.designation,
+        hr_email: head.email,
       };
       const content = JSON.stringify({
         values,
         body: template ? template.body : DEFAULT_BODY,
         layout: template ? template.layout : DEFAULT_LAYOUT,
+        letterhead: forLetter(head), // the letter keeps the address it was issued with
       });
       const t = now();
       let id;
@@ -364,12 +412,17 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
     const l = await row(enrollmentId);
     if (!l) return null;
     const template = l.template_id ? await templates.forRender(l.template_id) : null;
-    return { pdf: await renderOfferLetterPdf(JSON.parse(l.content), config, template), code: l.offer_code };
+    const content = JSON.parse(l.content);
+    // Letters issued before the letterhead had contacts show today's.
+    if (!content.letterhead) content.letterhead = forLetter(await letterheadInfo());
+    if (content.values.hr_email === undefined) content.values.hr_email = content.letterhead.email;
+    return { pdf: await renderOfferLetterPdf(content, config, template), code: l.offer_code };
   }
 
   /** A sample letter for a template (stored, or as being edited) with made-up values. */
   async function preview({ body, layout, templateId }) {
     const sign = await signatory();
+    const head = await letterheadInfo();
     const values = {
       student_name: 'Priya Sharma',
       student_id: `${config.studentIdPrefix}-STU-${new Date().getFullYear()}-00042`,
@@ -381,9 +434,10 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
       offer_letter_id: `${config.certIdPrefix}/OL/${new Date().getFullYear()}/0042`,
       signatory_name: sign.name,
       signatory_designation: sign.designation,
+      hr_email: head.email,
     };
     const template = templateId ? await templates.forRender(templateId) : null;
-    return renderOfferLetterPdf({ values, body, layout }, config, template, { preview: true });
+    return renderOfferLetterPdf({ values, body, layout, letterhead: forLetter(head) }, config, template, { preview: true });
   }
 
   /** Email the letter to the student. Resolves to the letter; status becomes sent or failed. */
@@ -396,7 +450,19 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
       if (!notifier || !notifier.studentEmailEnabled) throw new Error('Email is not configured on the server.');
       if (!student.email) throw new Error('The student has no email address.');
       const { pdf } = await render(enrollmentId);
-      await notifier.sendOfferLetter({ to: student.email, name: student.name, courseDomain: values.course_domain, offerLetterId: l.offer_code, pdf });
+      await notifier.sendOfferLetter({
+        to: student.email,
+        name: student.name,
+        courseDomain: values.course_domain,
+        offerLetterId: l.offer_code,
+        startDate: values.internship_start_date,
+        hrEmail: values.hr_email || (await letterheadInfo()).email,
+        signatory: values.signatory_name,
+        designation: values.signatory_designation,
+        policy: PAYMENT_POLICY,
+        termsUrl: `${String(config.siteUrl || '').replace(/\/+$/, '')}/terms/`,
+        pdf,
+      });
       await db.run("UPDATE offer_letters SET status = 'sent', email_error = NULL, sent_at = ?, updated_at = ? WHERE id = ?", [now(), now(), l.id]);
       await event(l.id, 'sent', `Emailed to ${student.email}`, actorId);
     } catch (err) {
@@ -407,7 +473,7 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
     return get(enrollmentId);
   }
 
-  return { generate, get, render, preview, send, signatory, emailEnabled: () => Boolean(notifier && notifier.studentEmailEnabled) };
+  return { generate, get, render, preview, send, signatory, letterheadInfo, emailEnabled: () => Boolean(notifier && notifier.studentEmailEnabled) };
 }
 
 /** Placeholders in an uploaded offer letter file (PDF), with suggested fields. */

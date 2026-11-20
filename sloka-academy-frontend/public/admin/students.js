@@ -7,19 +7,19 @@ import { api, can, copyBtn, ensureMeta, errorText, field, fmtDate, fmtDateTime, 
 
 // ------------------------------------------------------------------ view: students (master database)
 
-export const STUDENT_FILTERS = ['q', 'program', 'stream', 'yearOfStudy', 'sort'];
+const STUDENT_FILTERS = ['q', 'program', 'stream', 'yearOfStudy', 'sort'];
 
-export const programTag = (id, extra) => h('span', { class: 'badge program' }, label('program', id), extra ? ` · ${extra}` : null);
+const programTag = (id, extra) => h('span', { class: 'badge program' }, label('program', id), extra ? ` · ${extra}` : null);
 
 // ------------------------------------------------------------------ profile verification
 
-export const VERIFY_STATUS = {
+const VERIFY_STATUS = {
   pending: 'Waiting for the student’s code',
   failed: 'Code not confirmed',
   verified: 'Confirmed by the student',
   resolved: 'Settled by staff',
 };
-export const RESOLUTION_TEXT = {
+const RESOLUTION_TEXT = {
   code: 'The student confirmed it with the emailed code; the profile was updated with the submitted details.',
   link: 'Linked to the profile, which was kept as it was.',
   update: 'Linked to the profile, which was updated with the submitted details.',
@@ -27,7 +27,7 @@ export const RESOLUTION_TEXT = {
   edited: 'Settled when the record itself was edited.',
 };
 
-export function verificationBadge(v) {
+function verificationBadge(v) {
   const open = v.status === 'pending' || v.status === 'failed';
   const text = v.status === 'pending' && !v.codesSent ? 'Pending verification' : VERIFY_STATUS[v.status];
   return h('span', { class: 'badge', 'data-status': open ? 'verify' : v.status === 'verified' ? 'issued' : 'closed' }, text);

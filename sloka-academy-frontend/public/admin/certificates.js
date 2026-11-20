@@ -7,7 +7,7 @@ import { verificationPanel } from './students.js';
 
 // ------------------------------------------------------------------ certificates: shared helpers
 
-export const EVENT_LABELS = {
+const EVENT_LABELS = {
   registered: 'Registered, certificate issued',
   downloaded: 'First download by student',
   name_corrected: 'Name corrected',
@@ -19,7 +19,7 @@ export const EVENT_LABELS = {
   link_rotated: 'Download link replaced',
 };
 
-export const EMAIL_BADGES = {
+const EMAIL_BADGES = {
   sent: ['Emailed', 'issued'],
   pending: ['Sending', 'pending'],
   failed: ['Failed', 'revoked'],
@@ -36,9 +36,9 @@ export const sessionBadge = (s) =>
   s.acceptingNow
     ? h('span', { class: 'badge', 'data-status': 'open' }, 'Open')
     : h('span', { class: 'badge', 'data-status': 'closed' }, s.registrationOpen ? 'Closed (deadline passed)' : 'Closed');
-export const modeLabel = (m) => (m === 'online' ? 'Online' : 'In person');
+const modeLabel = (m) => (m === 'online' ? 'Online' : 'In person');
 
-export function registrationsTable(items, { showSession }) {
+function registrationsTable(items, { showSession }) {
   const td = (lbl, ...c) => h('td', { 'data-label': lbl }, ...c);
   const rows = items.map((r) =>
     h(
@@ -585,7 +585,7 @@ export async function viewCertificateDetail(id, stale) {
 }
 
 // Friends the student named under "Refer a friend". Each one is an enquiry the admissions team follows up.
-export function referralsCard(friends) {
+function referralsCard(friends) {
   if (!friends.length) return null;
   const td = (lbl, ...c) => h('td', { 'data-label': lbl }, ...c);
   return h(

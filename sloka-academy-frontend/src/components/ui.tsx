@@ -74,7 +74,7 @@ export function PageHeader({
 }
 
 /** Large price with the original fee struck through. */
-export function Price({ size = "lg" }: { size?: "lg" | "md" }) {
+function Price({ size = "lg" }: { size?: "lg" | "md" }) {
   return (
     <div className="flex flex-wrap items-end gap-x-5 gap-y-2">
       <span className={`display text-glow leading-none ${size === "lg" ? "text-[3.6rem] sm:text-[5.6rem]" : "text-[3.2rem]"}`}>
@@ -89,7 +89,7 @@ export function Price({ size = "lg" }: { size?: "lg" | "md" }) {
   );
 }
 
-export const FEE_INCLUDES = [
+const FEE_INCLUDES = [
   "Two months of session-wise teaching in your chosen domain",
   "Guided practice after every block of sessions",
   "A domain project, reviewed by your mentor",
@@ -98,7 +98,7 @@ export const FEE_INCLUDES = [
   "Certificate on completion and career guidance",
 ];
 
-export function SaveBadge() {
+function SaveBadge() {
   return (
     <span className="inline-flex items-center gap-2 rounded-full border border-red/50 bg-red/15 px-3.5 py-1.5 text-xs font-semibold tracking-wide text-red-hi shadow-[0_0_24px_-6px_var(--glow)]">
       <span className="h-1.5 w-1.5 rounded-full bg-red-hi" aria-hidden="true" />

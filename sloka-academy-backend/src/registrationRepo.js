@@ -2,7 +2,7 @@
 
 const C = require('./constants');
 const { nextStudentCode } = require('./studentIds');
-const { localDate, isValidDateString } = require('./util');
+const { localDate, isValidDateString, escapeLike } = require('./util');
 const { registrationScope } = require('./scope');
 
 /**
@@ -83,6 +83,8 @@ function enrollmentToApi(e, today = localDate()) {
     registrationDate: e.registration_date,
     remarks: e.remarks ?? null,
     offerLetter: e.offer_code ? { offerLetterId: e.offer_code, status: e.offer_status } : null,
+    // The last email of the invoice: status 'sent' | 'failed' | null (not emailed yet).
+    invoice: e.invoice_code ? { invoiceNumber: e.invoice_code, status: e.invoice_status ?? null, sentAt: e.invoice_sent_at ?? null, error: e.invoice_error ?? null } : null,
     createdBy: e.created_by ? { id: e.created_by, name: e.created_by_name ?? null } : null,
     createdAt: e.created_at,
     updatedAt: e.updated_at,
@@ -106,8 +108,6 @@ const SORTS = {
   name: 'st.name ASC, e.id ASC',
   balance: '(e.fee_paise - e.paid_paise) DESC, e.id DESC',
 };
-
-const escapeLike = (s) => s.replace(/[\\%_]/g, (ch) => `\\${ch}`);
 
 function addDays(ymd, n) {
   const [y, m, d] = ymd.split('-').map(Number);

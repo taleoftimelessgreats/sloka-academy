@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Icon } from "@/components/Icon";
 import { ClosingCta, Em, FaqList, FeeSection, Note, PageHeader, PreRegisterButton, PricingCard, SectionIntro } from "@/components/ui";
-import { formatINR, site } from "@/config/site";
+import { formatINR, paymentPolicy, site } from "@/config/site";
 import { FAQS, ROADMAP, feeSentence } from "@/data/program";
 
 export const metadata: Metadata = {
@@ -114,9 +114,13 @@ export default function ProgramPage() {
         <div className="mx-auto mt-16 max-w-3xl">
           <PricingCard />
           <p className="mt-6 text-center text-sm text-muted-2">
-            See our{" "}
+            {paymentPolicy.join(" ")} See our{" "}
             <Link href="/refund-policy/" className="text-text underline underline-offset-4">
               payment and refund policy
+            </Link>{" "}
+            and{" "}
+            <Link href="/terms/" className="text-text underline underline-offset-4">
+              terms &amp; conditions
             </Link>
             .
           </p>

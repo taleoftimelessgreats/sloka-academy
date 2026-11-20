@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { Icon } from "@/components/Icon";
 import { InquiryForm } from "@/components/InquiryForm";
 import { Em, Note, PageHeader } from "@/components/ui";
-import { enquiryMailto, formsEnabled, site } from "@/config/site";
+import { enquiryMailto, formsEnabled, paymentPolicy, site } from "@/config/site";
 
 export const metadata: Metadata = {
   title: "Pre-register",
@@ -42,7 +43,11 @@ export default function PreRegisterPage() {
             <div className="mt-10">
               <Note>
                 Registration and payments are handled directly by our admissions team. This website never asks for
-                payment details.
+                payment details. {paymentPolicy.join(" ")} See our{" "}
+                <Link href="/terms/" className="text-text underline underline-offset-4">
+                  Terms &amp; Conditions
+                </Link>
+                .
               </Note>
             </div>
           </div>

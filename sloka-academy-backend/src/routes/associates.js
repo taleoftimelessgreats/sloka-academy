@@ -4,11 +4,9 @@ const crypto = require('node:crypto');
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const { validateAssociate } = require('../validation');
-const { validationError, HttpError } = require('../util');
+const { validationError, HttpError, parseId, hasErrors } = require('../util');
 const { SUPER_ADMIN, isPermission, effectivePermissions } = require('../permissions');
 const { diff } = require('../audit');
-
-const hasErrors = (o) => Object.keys(o).length > 0;
 
 const associateToApi = (u) => ({
   id: u.id,
@@ -33,11 +31,6 @@ const SELECT = `
   SELECT u.*, r.name AS role_name, m.name AS manager_name,
     (SELECT COUNT(*) FROM user_permission_overrides o WHERE o.user_id = u.id) AS override_count
   FROM users u LEFT JOIN roles r ON r.role_key = u.role LEFT JOIN users m ON m.id = u.reporting_manager_id`;
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
 
 // Readable temporary passwords (no 0/O, 1/l/I): 12 characters, about 70 bits.
 const TEMP_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';

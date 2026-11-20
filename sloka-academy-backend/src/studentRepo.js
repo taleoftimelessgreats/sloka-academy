@@ -1,6 +1,7 @@
 'use strict';
 
 const C = require('./constants');
+const { escapeLike } = require('./util');
 const { studentScope, enquiryVisible } = require('./scope');
 const { detachFromStudent } = require('./profileVerification');
 const { regToApi } = require('./certificateRepo');
@@ -59,8 +60,6 @@ const PROGRAMS = {
   'career-guidance': 'EXISTS (SELECT 1 FROM certificate_registrations r WHERE r.student_id = st.id)',
   internship: 'EXISTS (SELECT 1 FROM inquiries i WHERE i.student_id = st.id)',
 };
-
-const escapeLike = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /**
  * Parse list/export filters. Returns { errors, where, params, order, page, pageSize }.

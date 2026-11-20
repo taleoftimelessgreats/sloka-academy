@@ -17,7 +17,7 @@ export const STREAMS = [
 
 export type StreamId = (typeof STREAMS)[number]["id"];
 
-export const STREAM_IDS: readonly StreamId[] = STREAMS.map((s) => s.id);
+const STREAM_IDS: readonly StreamId[] = STREAMS.map((s) => s.id);
 
 export function isStreamId(value: string | null): value is StreamId {
   return value !== null && (STREAM_IDS as readonly string[]).includes(value);

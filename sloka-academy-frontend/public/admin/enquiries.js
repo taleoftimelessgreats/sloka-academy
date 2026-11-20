@@ -7,8 +7,8 @@ import { verificationPanel } from './students.js';
 
 // ------------------------------------------------------------------ view: list
 
-export const FILTER_KEYS = ['q', 'status', 'source', 'stream', 'plan', 'assignedTo', 'followUp', 'sort', 'dir'];
-export const SORTS = [
+const FILTER_KEYS = ['q', 'status', 'source', 'stream', 'plan', 'assignedTo', 'followUp', 'sort', 'dir'];
+const SORTS = [
   { id: 'createdAt:desc', label: 'Newest first' },
   { id: 'createdAt:asc', label: 'Oldest first' },
   { id: 'updatedAt:desc', label: 'Recently updated' },
@@ -358,7 +358,7 @@ export async function viewDetail(id, stale) {
   }
 }
 
-export function domainList() {
+function domainList() {
   return h('datalist', { id: 'domain-list' }, (state.meta.domains || []).map((d) => h('option', { value: d })));
 }
 

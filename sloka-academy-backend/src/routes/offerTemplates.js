@@ -1,27 +1,11 @@
 'use strict';
 
 const express = require('express');
-const { inspectTemplateFile, sourceTypeOf, mappingPending, TemplateFileError, FONTS } = require('../certificateTemplates');
+const { inspectTemplateFile, sourceTypeOf, mappingPending, TemplateFileError, FONTS, UPLOAD_TYPES, FILE_MIME } = require('../certificateTemplates');
 const { detectOfferPlaceholders, validateBody, validateOfferLayout, OFFER_FIELDS, DEFAULT_BODY, DEFAULT_LAYOUT } = require('../offerLetters');
 const { toMappings } = require('../placeholders');
 const { validateTemplateName, isWinAnsi } = require('../validation');
-const { validationError, HttpError } = require('../util');
-
-// What the browser may label an upload. Only PDFs are accepted (the portal converts Word and PowerPoint files
-// first); the other types are read so that the file's own bytes can say why it was refused (certificateTemplates.js).
-const UPLOAD_TYPES = [
-  'application/pdf', 'image/png', 'image/jpeg', 'image/webp',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'application/octet-stream',
-];
-const MIME = { pdf: 'application/pdf', png: 'image/png', jpeg: 'image/jpeg' };
-const hasErrors = (o) => Object.keys(o).length > 0;
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
+const { validationError, HttpError, parseId, hasErrors } = require('../util');
 
 /** A letter needs something that names the student: text, or a placeholder in the uploaded document mapped to them. */
 function checkComplete(body, layout, fileType, errors) {
@@ -59,6 +43,7 @@ function offerTemplatesRouter({ config, auth, templates, offerLetters, settings,
       fields: OFFER_FIELDS.map(({ id, label }) => ({ id, label, placeholder: `{{${id}}}` })),
       fonts: FONTS.map(([id, label]) => ({ id, label })),
       signatory: await offerLetters.signatory(),
+      letterhead: await offerLetters.letterheadInfo(),
       maxBytes: config.templateMaxBytes,
     });
   });
@@ -144,6 +129,33 @@ function offerTemplatesRouter({ config, auth, templates, offerLetters, settings,
     res.json({ signatory: await offerLetters.signatory() });
   });
 
+  // The contacts on the built-in letterhead: { address (a line each, up to 4), email (HR), phone? }. New and
+  // regenerated letters show them; letters keep the ones they were issued with.
+  router.put('/letterhead', may('edit'), async (req, res) => {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const errors = {};
+    const lines = typeof body.address === 'string' ? body.address.split(/\r?\n|\r/).map((l) => l.trim()).filter(Boolean) : [];
+    if (!lines.length) errors.address = 'Enter the address.';
+    else if (lines.length > 4) errors.address = 'The address can have at most 4 lines.';
+    else if (lines.some((l) => [...l].length > 90)) errors.address = 'Each line of the address can have at most 90 characters.';
+    else if (!lines.every((l) => isWinAnsi(l))) errors.address = 'Address: use English letters and common punctuation only.';
+    const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 254) errors.email = 'Enter a valid email address.';
+    const phone = typeof body.phone === 'string' ? body.phone.trim() : '';
+    if (phone && !/^[+0-9 ()-]{6,30}$/.test(phone)) errors.phone = 'Enter a phone number (digits, spaces, + ( ) -).';
+    if (hasErrors(errors)) throw validationError(errors);
+    const before = await offerLetters.letterheadInfo();
+    await settings.setMany({ offer_letterhead_address: lines.join('\n'), offer_hr_email: email, offer_letterhead_phone: phone }, req.user.id);
+    const after = await offerLetters.letterheadInfo();
+    await audit.log({
+      actorId: req.user.id, entity: 'settings', entityId: 'offer_letterhead', action: 'update', summary: 'Changed the offer letter letterhead',
+      changes: [['Address', 'address'], ['HR email', 'email'], ['Phone', 'phone']]
+        .filter(([, k]) => before[k] !== after[k])
+        .map(([field, k]) => ({ field, from: before[k] || null, to: after[k] || null })),
+    });
+    res.json({ letterhead: after });
+  });
+
   // Sample letter. { templateId?, body?, layout? }: a stored template, or one being edited (body/layout not yet saved).
   router.post('/preview', may('view'), async (req, res) => {
     const b = req.body && typeof req.body === 'object' ? req.body : {};
@@ -171,7 +183,7 @@ function offerTemplatesRouter({ config, auth, templates, offerLetters, settings,
     const id = parseId(req.params.id);
     const t = await load(id);
     if (!t.fileType) throw new HttpError(404, { error: 'not_found' });
-    res.setHeader('Content-Type', MIME[t.fileType]);
+    res.setHeader('Content-Type', FILE_MIME[t.fileType]);
     res.setHeader('Content-Disposition', `attachment; filename="offer-template-${id}.${t.fileType === 'jpeg' ? 'jpg' : t.fileType}"`);
     res.send(await templates.file(id));
   });

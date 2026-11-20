@@ -6,14 +6,7 @@ const { parseRegFilters } = require('../certificateRepo');
 const { validateCertCorrection, validateRevoke } = require('../validation');
 const { verifyLink } = require('../certificatePdf');
 const { toCsv, nationalPhone } = require('../csv');
-const { localDate, localDateTime, validationError, HttpError } = require('../util');
-
-const hasErrors = (o) => Object.keys(o).length > 0;
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
+const { localDate, localDateTime, validationError, HttpError, parseId, hasErrors } = require('../util');
 
 const EMAIL_LABELS = { pending: 'Sending', sent: 'Sent', failed: 'Failed', off: 'Email not set up' };
 

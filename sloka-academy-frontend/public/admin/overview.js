@@ -6,7 +6,7 @@ import { api, can, ensureMeta, fmtDate, fmtDateTime, fmtMoney, h, mount, state, 
 
 // ------------------------------------------------------------------ view: overview
 
-export function conversionTable(title, rows, keyLabel) {
+function conversionTable(title, rows, keyLabel) {
   const table = h(
     'table',
     null,

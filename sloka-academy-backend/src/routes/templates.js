@@ -11,29 +11,15 @@ const {
   sourceTypeOf,
   mappingPending,
   TemplateFileError,
+  UPLOAD_TYPES,
+  FILE_MIME,
   PLACEHOLDER_FIELDS,
   initialLayout,
   detectPlaceholders,
 } = require('../certificateTemplates');
 const { renderCertificatePdf } = require('../certificatePdf');
 const { validateTemplateName } = require('../validation');
-const { localDate, validationError, HttpError } = require('../util');
-
-// What the browser may label an upload. Only PDFs are accepted (the portal converts Word and PowerPoint files
-// first); the other types are read so that the file's own bytes can say why it was refused (certificateTemplates.js).
-const UPLOAD_TYPES = [
-  'application/pdf', 'image/png', 'image/jpeg', 'image/webp',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-  'application/octet-stream',
-];
-const MIME = { pdf: 'application/pdf', png: 'image/png', jpeg: 'image/jpeg' };
-const hasErrors = (o) => Object.keys(o).length > 0;
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
+const { localDate, validationError, HttpError, parseId, hasErrors } = require('../util');
 
 /**
  * Certificate designs: uploaded templates (PDF; Word and PowerPoint files are converted to PDF by the portal), where
@@ -154,7 +140,7 @@ function templatesRouter({ config, templateRepo, auth, audit }) {
     const id = parseId(req.params.id);
     const t = await load(id);
     const { file } = await templateRepo.forRender(id);
-    res.setHeader('Content-Type', MIME[t.fileType]);
+    res.setHeader('Content-Type', FILE_MIME[t.fileType]);
     res.setHeader('Content-Disposition', `attachment; filename="certificate-template-${id}.${t.fileType === 'jpeg' ? 'jpg' : t.fileType}"`);
     res.send(file);
   });

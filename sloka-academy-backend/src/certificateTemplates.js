@@ -141,6 +141,17 @@ function validateLayout(input) {
 
 class TemplateFileError extends Error {}
 
+// What the browser may label an upload. Only PDFs are accepted (the portal converts Word and PowerPoint files
+// first); the other types are read so that the file's own bytes can say why it was refused.
+const UPLOAD_TYPES = [
+  'application/pdf', 'image/png', 'image/jpeg', 'image/webp',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'application/octet-stream',
+];
+// Content types of stored template files (image templates date from before images were refused).
+const FILE_MIME = { pdf: 'application/pdf', png: 'image/png', jpeg: 'image/jpeg' };
+
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const ZIP_SIGNATURE = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
 const OLE_SIGNATURE = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]); // .doc, .ppt
@@ -355,5 +366,7 @@ module.exports = {
   sourceTypeOf,
   mappingPending,
   TemplateFileError,
+  UPLOAD_TYPES,
+  FILE_MIME,
   createTemplateRepo,
 };

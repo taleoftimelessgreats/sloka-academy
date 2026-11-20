@@ -1,10 +1,11 @@
 import type { Metadata } from "next";
 import { PolicyPage } from "@/components/PolicyPage";
+import Link from "next/link";
 import { formsEnabled, site } from "@/config/site";
 
 export const metadata: Metadata = {
-  title: "Privacy Notice",
-  description: "How the Sloka Academy website handles information.",
+  title: "Privacy Policy",
+  description: "How Sloka Academy collects, uses and protects personal information.",
   alternates: { canonical: "/privacy/" },
 };
 
@@ -12,11 +13,11 @@ export const metadata: Metadata = {
 // requirements under India's Digital Personal Data Protection Act (DPDP) with a legal adviser.
 export default function PrivacyPage() {
   return (
-    <PolicyPage title="Privacy Notice" updated="31 October 2026">
+    <PolicyPage title="Privacy Policy" updated="20 November 2026">
       {formsEnabled ? (
         <>
           <p>
-            This notice explains how {site.name} handles information when you use this website. The website has no
+            This policy explains how {site.name} handles information when you use this website. The website has no
             user accounts or payment pages. It has a few short forms: Pre-register, Contact, the form you fill in before
             downloading a brochure, and the Career Guidance Certificate form.
           </p>
@@ -25,7 +26,7 @@ export default function PrivacyPage() {
           <p>
             Each form asks for your name, mobile number and email, and depending on the form, your stream, college,
             year of study, the domain and plan you are interested in, and your question. We also record which form you
-            used, when you sent it and that you agreed to this notice. We collect nothing else through the forms.
+            used, when you sent it and that you agreed to this policy. We collect nothing else through the forms.
           </p>
 
           <h2>Career guidance certificates</h2>
@@ -82,7 +83,7 @@ export default function PrivacyPage() {
       ) : (
         <>
           <p>
-            This notice explains how {site.name} handles information when you use this website. The website is an
+            This policy explains how {site.name} handles information when you use this website. The website is an
             informational site: it has no user accounts, contact forms or payment pages.
           </p>
 
@@ -94,6 +95,15 @@ export default function PrivacyPage() {
           </p>
         </>
       )}
+
+      <h2>Registering for a program</h2>
+      <p>
+        When you register for the {site.programName} with our admissions team, we record your name, mobile number,
+        email, college and study details, the course domain and batch, the fee agreed and each payment you make
+        (amount, date, mode and reference). We use these to manage your registration, to email you an updated invoice
+        after every payment and your internship offer letter, and to keep the accounts the law requires. We do not
+        store card or bank login details.
+      </p>
 
       <h2>When you contact us</h2>
       <p>
@@ -115,9 +125,18 @@ export default function PrivacyPage() {
         browser type and pages requested) in server logs for security and reliability.
       </p>
 
+      <h2>Security and changes</h2>
+      <p>
+        Access to your details is limited to {site.name} staff who need it, each with their own login, and changes
+        are logged. We may update this policy; the date above shows the latest version.
+      </p>
+
       <h2>Contact</h2>
       <p>
-        For privacy questions, email <a href={`mailto:${site.contact.email}`}>{site.contact.email}</a>.
+        For privacy questions, or to see, correct or delete your details, email{" "}
+        <a href={`mailto:${site.contact.email}`}>{site.contact.email}</a>. Our{" "}
+        <Link href="/terms/">Terms &amp; Conditions</Link> and <Link href="/refund-policy/">Payment &amp; Refund Policy</Link>{" "}
+        also apply.
       </p>
     </PolicyPage>
   );

@@ -445,3 +445,8 @@ dialog.modal tr.unmapped td:first-child { box-shadow: inset 3px 0 0 var(--warn);
 
 /* the hidden frame that converts Word and PowerPoint templates to PDF (settings.js, officeToPdf) */
 .converter-frame { position: fixed; left: -20000px; top: 0; width: 1600px; height: 1200px; border: 0; }
+
+/* policies, at the foot of every portal page */
+.portal-foot { display: flex; gap: 18px; flex-wrap: wrap; justify-content: center; padding: 8px 16px 28px; }
+.portal-foot a { color: var(--muted); }
+.policy-note { margin-top: 10px; }

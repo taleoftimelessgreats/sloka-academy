@@ -5,14 +5,7 @@ const C = require('../constants');
 const { parseRegistrationFilters, RegistrationError } = require('../registrationRepo');
 const { validateRegistrationStudent, validateEnrollment, validatePayment, normalizePhone, asObject } = require('../validation');
 const { toCsv, nationalPhone } = require('../csv');
-const { localDate, isValidDateString, validationError, HttpError } = require('../util');
-
-const hasErrors = (o) => Object.keys(o).length > 0;
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
+const { localDate, isValidDateString, validationError, HttpError, parseId, hasErrors } = require('../util');
 
 const OFFER_STATUS = { generated: 'Generated', sent: 'Sent', failed: 'Failed' };
 
@@ -20,7 +13,7 @@ const OFFER_STATUS = { generated: 'Generated', sent: 'Sent', failed: 'Failed' };
  * Staff: internship registrations made by the BD team. Every route keeps to the user's data scope
  * (own / team / all registrations, by BD Associate); a registration outside it is "not found".
  */
-function registrationsRouter({ db, auth, registrations, offerLetters }) {
+function registrationsRouter({ db, auth, registrations, offerLetters, invoices }) {
   const router = express.Router();
   const may = (p) => auth.requirePermission(p);
   const notFound = () => new HttpError(404, { error: 'not_found' });
@@ -123,7 +116,9 @@ function registrationsRouter({ db, auth, registrations, offerLetters }) {
       if (!(err instanceof RegistrationError) || err.body) throw err;
       throw validationError(Object.fromEntries(Object.entries(err.fields).map(([k, v]) => [k === 'studentId' ? k : `enrollment.${k}`, v])));
     }
-    res.status(201).json({ registration: await registrations.get(id) });
+    // The slot is confirmed: the invoice (with the registration amount) goes to the student.
+    const invoiceEmail = await invoices.send(id);
+    res.status(201).json({ registration: await registrations.get(id), invoiceEmail });
   });
 
   // ---- conflicts the associates flagged ("not the same student")
@@ -199,8 +194,10 @@ function registrationsRouter({ db, auth, registrations, offerLetters }) {
     await load(req, id);
     const { values, errors } = validatePayment(req.body);
     if (hasErrors(errors)) throw validationError(errors);
-    const registration = await registrations.addPayment(id, values, req.user.id);
-    res.status(201).json({ registration, payments: await registrations.payments(id) });
+    if (!(await registrations.addPayment(id, values, req.user.id))) throw notFound();
+    // After every payment the updated invoice goes to the student: history, total paid and balance.
+    const invoiceEmail = await invoices.send(id);
+    res.status(201).json({ registration: await registrations.get(id), payments: await registrations.payments(id), invoiceEmail });
   });
 
   router.patch('/:id/payments/:paymentId', may('registrations.edit'), async (req, res) => {
@@ -219,6 +216,26 @@ function registrationsRouter({ db, auth, registrations, offerLetters }) {
     const registration = await registrations.removePayment(id, parseId(req.params.paymentId), req.user.id);
     if (!registration) throw notFound();
     res.json({ registration, payments: await registrations.payments(id) });
+  });
+
+  // ---- invoice (always drawn from the payment ledger: every payment, the total paid and the balance)
+
+  router.get('/:id/invoice/pdf', may('registrations.view'), async (req, res) => {
+    const id = parseId(req.params.id);
+    await load(req, id);
+    const invoice = await invoices.render(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${req.query.inline === '1' ? 'inline' : 'attachment'}; filename="Invoice-${invoice.code.replace(/\//g, '-')}.pdf"`);
+    res.send(invoice.pdf);
+  });
+
+  // Email the up-to-date invoice again (it is sent by itself after a payment; after a correction, send it from here).
+  router.post('/:id/invoice/send', auth.requireAny('payments.create', 'registrations.create', 'registrations.edit'), may('registrations.view'), async (req, res) => {
+    const id = parseId(req.params.id);
+    await load(req, id);
+    if (!invoices.emailEnabled()) return res.status(400).json({ error: 'email_not_configured', message: 'Email is not configured on the server. Download the invoice and send it yourself.' });
+    const invoiceEmail = await invoices.send(id);
+    return res.json({ registration: await registrations.get(id), invoiceEmail });
   });
 
   // ---- offer letter

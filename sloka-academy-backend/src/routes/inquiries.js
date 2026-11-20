@@ -5,15 +5,8 @@ const C = require('../constants');
 const { parseFilters } = require('../inquiryRepo');
 const { validateManualInquiry, validateInquiryUpdate, validateNote } = require('../validation');
 const { toCsv, nationalPhone } = require('../csv');
-const { localDate, localDateTime, validationError, HttpError } = require('../util');
+const { localDate, localDateTime, validationError, HttpError, parseId, hasErrors } = require('../util');
 const { enquiryVisible } = require('../scope');
-
-const hasErrors = (o) => Object.keys(o).length > 0;
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
 
 /**
  * Staff: internship enquiries (permissions enquiries.*), within the user's data scope: enquiries assigned to

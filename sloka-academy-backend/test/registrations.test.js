@@ -31,7 +31,8 @@ describe('internship registrations', () => {
   let ctx, apis, ids, courses;
 
   before(async () => {
-    ctx = await startApp({ studentEmail: true });
+    // Invoices are emailed after every payment: lift the daily limit per address, which these tests would reach.
+    ctx = await startApp({ studentEmail: true, config: { emailDailyLimit: 100 } });
     const people = {
       admin: { name: 'Anita Admin', role: 'admin' },
       lead: { name: 'Lakshmi Lead', role: 'bd_manager' },
@@ -117,6 +118,10 @@ describe('internship registrations', () => {
     assert.equal(reg.student.phone, '+919876543210');
     assert.equal(reg.student.email, 'priya@example.com');
     assert.equal(reg.offerLetter, null, 'issued once the fee is fully paid');
+    // The invoice, with the registration amount, goes to the student at once.
+    assert.equal(r.data.invoiceEmail, 'sent');
+    assert.match(reg.invoice.invoiceNumber, new RegExp(`^SLK/INV/${new Date().getFullYear()}/\\d{4}$`));
+    assert.equal(reg.invoice.status, 'sent');
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM offer_letters')).n, 0);
     const s = await ctx.db.get('SELECT * FROM students WHERE id = ?', [reg.student.id]);
     assert.equal(s.gender, 'female');
@@ -362,7 +367,9 @@ describe('internship registrations', () => {
     const mail = ctx.outbox.find((m) => m.subject.includes('offer letter'));
     assert.equal(mail.to, 'priya@example.com');
     assert.match(mail.attachments[0].filename, /^Offer-Letter-SLK-OL-/);
-    assert.match(mail.text, /internship in Data Science/);
+    assert.match(mail.text, /internship in Data Science at Sloka Academy, commencing on/);
+    assert.match(mail.text, /confirm your acceptance by writing to hr@slokaacademy\.com, quoting the reference number/);
+    assert.match(mail.subject, /^Your offer letter: internship in Data Science, Sloka Academy \(SLK\/OL\//);
     // Another date: the letter is regenerated, then sent.
     ctx.mail.fail = 'mailbox full';
     const failed = (await apis.bhavana.post(`/api/registrations/${id}/offer-letter/send`, { startDate: day(15) })).data.offerLetter;
@@ -377,6 +384,60 @@ describe('internship registrations', () => {
     assert.equal((await apis.ravi.post(`/api/registrations/${fullPayer.id}/offer-letter/generate`, { startDate: day(7) })).status, 200);
     const ins = (await apis.admin.get('/api/registrations/insights')).data.insights;
     assert.deepEqual([ins.offerLetters, ins.awaitingOfferLetter], [2, 0]);
+  });
+
+  test('invoice: emailed after every payment with the history, total paid and balance; download, resend, the payment policy', async () => {
+    const id = ctx.priya.id;
+    const number = ctx.priya.invoice.invoiceNumber;
+    // One email at registration and one after each later payment (5,000, 7,999 and 8,999), each with the invoice.
+    const mails = ctx.outbox.filter((m) => m.to === 'priya@example.com' && m.subject.includes(number));
+    assert.equal(mails.length, 4);
+    assert.match(mails[0].subject, /balance Rs\. 12,999\.00$/);
+    assert.match(mails.at(-1).subject, /paid in full$/);
+    const first = mails[0];
+    assert.match(first.attachments[0].filename, /^Invoice-SLK-INV-\d{4}-\d{4}\.pdf$/);
+    for (const v of ['Total amount paid: Rs. 2,000.00', 'Outstanding balance: Rs. 12,999.00 (due by', 'All payments are non-refundable.', 'Payments are collected exclusively for training purposes.', '/terms/']) {
+      assert.ok(first.text.includes(v), v);
+    }
+    // Corrections do not email by themselves; the invoice always shows the ledger as it is now.
+    const text = async (bytes) => {
+      globalThis.pdfjsWorker ||= await import('pdfjs-dist/legacy/build/pdf.worker.mjs');
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      const task = pdfjs.getDocument({ data: new Uint8Array(bytes), verbosity: 0 });
+      const page = await (await task.promise).getPage(1);
+      const out = (await page.getTextContent()).items.map((i) => i.str).join(' ');
+      await task.destroy();
+      return out;
+    };
+    const cookie = (await login(ctx.base, 'bhavana@sloka.test', 'bhavana-password-123')).cookie;
+    const pdf = await fetch(`${ctx.base}/api/registrations/${id}/invoice/pdf`, { headers: { Cookie: cookie } });
+    assert.equal(pdf.status, 200);
+    assert.match(pdf.headers.get('content-disposition'), /Invoice-SLK-INV-\d{4}-\d{4}\.pdf/);
+    const printed = await text(Buffer.from(await pdf.arrayBuffer()));
+    for (const v of [
+      'INVOICE', number, 'Priya Sharma', 'Data Science', 'PAYMENT HISTORY', 'Registration amount', 'Rs. 2,000.00', 'Rs. 5,000.00', 'Rs. 8,999.00',
+      'Rs. 15,999.00', 'PAID IN FULL', 'Rs. 0.00', 'All payments are non-refundable.', 'Payments are collected exclusively for training purposes.',
+    ]) assert.ok(printed.includes(v), v);
+    assert.ok(!printed.includes('7,999'), 'the payment that was removed is not on it');
+    assert.equal((await apis.ravi.get(`/api/registrations/${id}/invoice/pdf`)).status, 404, 'outside the scope');
+    // Sending it again, and a failure.
+    const again = await apis.accounts.post(`/api/registrations/${id}/invoice/send`);
+    assert.equal(again.data.invoiceEmail, 'sent');
+    ctx.mail.fail = 'mailbox full';
+    const failed = await apis.bhavana.post(`/api/registrations/${id}/invoice/send`);
+    ctx.mail.fail = null;
+    assert.equal(failed.data.invoiceEmail, 'failed');
+    assert.equal(failed.data.registration.invoice.status, 'failed');
+    assert.match(failed.data.registration.invoice.error, /mailbox full/);
+    // A registration from before invoices gets its number when its invoice is first needed; numbers are not reused.
+    const other = (await apis.ravi.get('/api/registrations')).data.items.find((e) => e.student.name === 'Full Payer');
+    await ctx.db.run('UPDATE enrollments SET invoice_code = NULL WHERE id = ?', [other.id]);
+    assert.equal((await apis.ravi.get(`/api/registrations/${other.id}/invoice/pdf`)).status, 200);
+    const fresh = (await apis.ravi.get(`/api/registrations/${other.id}`)).data.registration.invoice.invoiceNumber;
+    assert.notEqual(fresh, other.invoice.invoiceNumber);
+    // The policy travels with the labels the portal loads, and with the offer letter email.
+    assert.deepEqual((await apis.bhavana.get('/api/meta')).data.paymentPolicy, ['All payments are non-refundable.', 'Payments are collected exclusively for training purposes.']);
+    assert.ok(ctx.outbox.find((m) => m.subject.includes('offer letter')).text.includes('All payments are non-refundable.'));
   });
 
   test('registration CSV export and deletion (logged); erasing a student removes their registrations', async () => {

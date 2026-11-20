@@ -89,4 +89,16 @@ function validationError(fields) {
   return new HttpError(400, { error: 'validation', fields });
 }
 
-module.exports = { localDate, localDateTime, isValidDateString, RateLimiter, HttpError, validationError };
+/** A numeric id from a route parameter; anything else is "not found". */
+function parseId(raw) {
+  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
+  return Number(raw);
+}
+
+/** Whether a validator's errors object has any. */
+const hasErrors = (errors) => Object.keys(errors).length > 0;
+
+/** Escape LIKE's wildcards in a search term (backslash is LIKE's escape character in MySQL/TiDB). */
+const escapeLike = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
+
+module.exports = { localDate, localDateTime, isValidDateString, RateLimiter, HttpError, validationError, parseId, hasErrors, escapeLike };

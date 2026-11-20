@@ -9,7 +9,7 @@ import { InquiryForm } from "./InquiryForm";
 const downloadName = (title: string) => `Sloka-Academy-${title.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "")}-Brochure.pdf`;
 
 /** The plain download link for a brochure PDF. */
-export function BrochureLink({ file, title, className = "btn btn-red" }: { file: string; title: string; className?: string }) {
+function BrochureLink({ file, title, className = "btn btn-red" }: { file: string; title: string; className?: string }) {
   return (
     <a href={file} download={downloadName(title)} className={className}>
       <Icon name="download" size={18} />

@@ -1,7 +1,7 @@
 'use strict';
 
 const C = require('./constants');
-const { localDate } = require('./util');
+const { localDate, escapeLike } = require('./util');
 const { linkStudent, pruneStudent: pruneProfile } = require('./studentMatch');
 const { openVerification, closeForRecord } = require('./profileVerification');
 const { enquiryScope } = require('./scope');
@@ -70,9 +70,6 @@ function toApi(row) {
       : null,
   };
 }
-
-// Backslash is LIKE's default escape character in MySQL/TiDB.
-const escapeLike = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /**
  * Parse list/export filters from a query object. Returns { errors, where, params, order, page, pageSize }.

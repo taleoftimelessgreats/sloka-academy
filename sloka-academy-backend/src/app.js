@@ -29,6 +29,7 @@ const { publicVerificationRouter } = require('./routes/publicVerification');
 const { createAudit } = require('./audit');
 const { createRegistrationRepo, RegistrationError } = require('./registrationRepo');
 const { createOfferTemplateRepo, createOfferLetters } = require('./offerLetters');
+const { createInvoices } = require('./invoices');
 const { registrationsRouter } = require('./routes/registrations');
 const { coursesRouter } = require('./routes/courses');
 const { offerTemplatesRouter } = require('./routes/offerTemplates');
@@ -81,6 +82,7 @@ function createApp({ db, config, notifier, emailQuota, sheetsFetch, background =
   const audit = createAudit(db);
   const offerTemplates = createOfferTemplateRepo(db);
   const offerLetters = createOfferLetters({ db, config, templates: offerTemplates, settings, notifier });
+  const invoices = createInvoices({ db, config, offerLetters, notifier });
   const registrations = createRegistrationRepo(db, config, { offerLetters, audit });
   app.locals.services = { delivery, sheetSync, studentRepo, templateRepo, certRepo, verifications, quota, audit, registrations, offerLetters, offerTemplates };
 
@@ -183,7 +185,7 @@ function createApp({ db, config, notifier, emailQuota, sheetsFetch, background =
   app.use('/api/certificates', auth.authenticate, certificatesRouter({ config, certRepo, delivery, auth, verifications, audit }));
   app.use('/api/templates', auth.authenticate, templatesRouter({ config, templateRepo, auth, audit }));
   app.use('/api/settings', auth.authenticate, auth.requirePermission('settings.view'), settingsRouter({ config, sheetSync, delivery, auth, audit }));
-  app.use('/api/registrations', auth.authenticate, registrationsRouter({ db, auth, registrations, offerLetters }));
+  app.use('/api/registrations', auth.authenticate, registrationsRouter({ db, auth, registrations, offerLetters, invoices }));
   app.use('/api/courses', auth.authenticate, coursesRouter({ db, auth, registrations, audit }));
   app.use('/api/offer-templates', auth.authenticate, offerTemplatesRouter({ config, auth, templates: offerTemplates, offerLetters, settings, audit }));
   app.use('/api/associates', auth.authenticate, associatesRouter({ db, config, auth, audit, notifier }));

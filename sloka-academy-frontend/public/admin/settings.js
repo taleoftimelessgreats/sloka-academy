@@ -35,7 +35,7 @@ export async function viewSettings(stale) {
   );
 }
 
-export function sheetCard(settings, script, reload) {
+function sheetCard(settings, script, reload) {
   const g = settings.googleSheet;
   const card = h('section', { class: 'card', id: 'google-sheet' }, h('h2', null, 'Google Sheet'));
   card.append(
@@ -128,7 +128,7 @@ export function sheetCard(settings, script, reload) {
   return card;
 }
 
-export function designsCard(designs, reload) {
+function designsCard(designs, reload) {
   const card = h('section', { class: 'card card-flush', id: 'designs' }, h('h2', null, 'Certificate designs'));
   card.append(h('p', { class: 'muted pad' }, 'Upload the certificate artwork, then choose what is printed where. A PDF with placeholders such as {{Student Name}} has them replaced; otherwise place the name, session and other details on it. New certificates use the default design unless their session picks another. Certificates keep the design they were issued with.'));
   const editable = can('certTemplates.edit');
@@ -268,7 +268,7 @@ export function designsCard(designs, reload) {
   return card;
 }
 
-export function emailCard(email) {
+function emailCard(email) {
   return h(
     'section',
     { class: 'card' },
@@ -588,7 +588,7 @@ function mappingRows(list, confirmed, isNew = () => !confirmed) {
  * The placeholders found in an uploaded PDF and what each is replaced by. Shared by certificate designs and
  * offer letter templates. Returns { element, collect() }. fieldOptions: [{ id, label }]; rescanPath: POST endpoint.
  */
-export function placeholderMapper(initial, { fieldOptions, fonts, fileType, rescanPath, onChange, onNew }) {
+function placeholderMapper(initial, { fieldOptions, fonts, fileType, rescanPath, onChange, onNew }) {
   let list = structuredClone(initial || []);
   const body = h('tbody');
   const aligns = ['left', 'center', 'right'].map((a) => ({ id: a, label: a[0].toUpperCase() + a.slice(1) }));
@@ -697,7 +697,7 @@ export function placeholderMapper(initial, { fieldOptions, fonts, fileType, resc
 
 // ------------------------------------------------------------------ course master
 
-export function coursesCard(courses, templates, reload) {
+function coursesCard(courses, templates, reload) {
   const card = h('section', { class: 'card card-flush', id: 'courses' }, h('div', { class: 'pad' }, h('h2', null, 'Course master'), h('p', { class: 'muted small' }, 'The course domains students register for, the internship duration printed on their offer letter, and (optionally) the offer letter template of each domain.')));
   const editable = can('courses.edit');
   const activeTemplates = templates.filter((t) => t.active);
@@ -854,7 +854,7 @@ async function uploadFile(path, name, file, { source = null } = {}) {
   return body;
 }
 
-export function offerLettersCard(data, reload) {
+function offerLettersCard(data, reload) {
   const card = h(
     'section',
     { class: 'card card-flush', id: 'offer-letters' },
@@ -977,6 +977,38 @@ export function offerLettersCard(data, reload) {
   }
 
   if (editable) {
+    // The letterhead's contacts (built-in design): official address and HR email, phone if wanted.
+    const lh = data.letterhead || { address: '', email: '', phone: '' };
+    const address = h('textarea', { name: 'address', rows: '3', maxlength: '360' }, lh.address || '');
+    const hrEmail = h('input', { name: 'email', type: 'email', maxlength: '254', value: lh.email || '' });
+    const phone = h('input', { name: 'phone', type: 'tel', maxlength: '30', value: lh.phone || '', placeholder: 'Optional' });
+    const headForm = h(
+      'form',
+      { class: 'pad', novalidate: true },
+      h('h3', null, 'Letterhead'),
+      h('p', { class: 'muted small' }, 'Printed at the top of letters on the built-in Sloka letterhead (new and regenerated letters), with the website. The HR email is also {{hr_email}} in the letter text.'),
+      h(
+        'div',
+        { class: 'form-grid' },
+        field('Official address', address, { name: 'address', full: true, hint: 'One line of the address per line (up to 4).' }),
+        field('HR email', hrEmail, { name: 'email' }),
+        field('Phone', phone, { name: 'phone' }),
+      ),
+      h('p', { class: 'form-error', role: 'alert' }),
+      h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save letterhead')),
+    );
+    headForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      clearErrors(headForm);
+      try {
+        await api('PUT', '/api/offer-templates/letterhead', { address: address.value, email: hrEmail.value, phone: phone.value });
+        toast('Letterhead saved');
+      } catch (err) {
+        showErrors(headForm, err);
+      }
+    });
+    card.append(headForm);
+
     const sname = h('input', { name: 'name', maxlength: '100', value: data.signatory.name || '' });
     const sdes = h('input', { name: 'designation', maxlength: '100', value: data.signatory.designation || '' });
     const form = h(
@@ -1107,7 +1139,7 @@ export async function viewOfferTemplateEditor(id, stale) {
         { class: 'muted small' },
         t.fileType === 'pdf'
           ? 'Printed on your file within the margins below. Leave it empty if your PDF is the complete letter: its placeholders are filled in instead.'
-          : 'Insert details with the buttons. **Text between two pairs of stars** is printed in bold. A blank line starts a new paragraph.',
+          : 'Insert details with the buttons. **Text between two pairs of stars** is printed in bold, and a blank line starts a new paragraph. A line starting with # is the letter’s title and ## a section heading; rows written | Label | Value | make a details panel; a line with --- leaves space (for a signature). The built-in letterhead adds the reference and date.',
       ),
       chips,
       field('Text', bodyInput, { name: 'body', full: true }),

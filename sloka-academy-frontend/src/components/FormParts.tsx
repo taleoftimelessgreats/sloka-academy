@@ -82,7 +82,7 @@ export function Honeypot({ uid }: { uid: string }) {
   );
 }
 
-/** Required consent checkbox linked to the Privacy Notice. Opens the form's closing group (consent, errors, submit). */
+/** Required consent checkbox linked to the Privacy Policy and the Terms & Conditions. Opens the form's closing group (consent, errors, submit). */
 export function Consent({ error, children }: { error?: string; children: ReactNode }) {
   const errorId = useId();
   return (
@@ -99,7 +99,11 @@ export function Consent({ error, children }: { error?: string; children: ReactNo
         <span>
           {children}{" "}
           <a href="/privacy/" target="_blank" rel="noopener" className="text-text underline underline-offset-4">
-            Privacy Notice
+            Privacy Policy
+          </a>{" "}
+          and{" "}
+          <a href="/terms/" target="_blank" rel="noopener" className="text-text underline underline-offset-4">
+            Terms &amp; Conditions
           </a>
           .
         </span>

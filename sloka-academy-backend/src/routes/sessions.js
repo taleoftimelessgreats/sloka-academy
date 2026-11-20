@@ -4,16 +4,9 @@ const express = require('express');
 const { validateSession } = require('../validation');
 const { generateSessionCode } = require('../certIds');
 const { parseRegFilters } = require('../certificateRepo');
-const { validationError, HttpError } = require('../util');
+const { validationError, HttpError, parseId, hasErrors } = require('../util');
 const { certificatesCsv } = require('./certificates');
 const { mappingPending } = require('../certificateTemplates');
-
-const hasErrors = (o) => Object.keys(o).length > 0;
-
-function parseId(raw) {
-  if (!/^\d{1,12}$/.test(String(raw))) throw new HttpError(404, { error: 'not_found' });
-  return Number(raw);
-}
 
 /** Staff: career guidance sessions (permissions sessions.*). */
 function sessionsRouter({ config, certRepo, templateRepo, auth }) {
