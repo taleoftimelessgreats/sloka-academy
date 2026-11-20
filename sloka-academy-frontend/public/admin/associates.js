@@ -142,6 +142,7 @@ function overridesCard(a, overrides, rolesData, reload) {
       rolesData.actions.map((act) => {
         const def = m.actions.find((x) => x.id === act.id);
         if (!def) return h('td', { class: 'na' }, '');
+        if (def.superAdminOnly) return h('td', { class: 'muted small', title: 'Only Super Admins can delete records' }, 'Super Admin only');
         const p = `${m.id}.${act.id}`;
         const inherited = fromRole.has(p);
         const current = Object.hasOwn(overrides, p) ? (overrides[p] ? 'grant' : 'revoke') : 'role';

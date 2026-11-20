@@ -146,9 +146,10 @@ Roles are rows in the database, edited by Super Admins on the **Roles & permissi
 | Manage associates | ✓ | ✓ (not Super Admins) | — | — | — |
 | Manage offer letter templates | ✓ | ✓ | — | — | — |
 | Generate/send offer letters | ✓ | ✓ | Team | Own | — |
+| Delete records (students, payments, registrations, enquiries, sessions, certificates, templates) | ✓ | — | — | — | — |
 | Roles & permissions | ✓ | — | — | — | — |
 
-Admin also has every other module (students, enquiries, sessions, certificates, designs, settings, audit log). BD Managers and BD Associates also work enquiries. The portal's two original roles are kept as roles too: **Manager** (sessions, certificate designs, revoking certificates, settings, associates below them, enquiries) and **Counsellor** (enquiries; views students, sessions and certificates).
+Admin also has every other module (students, enquiries, sessions, certificates, designs, settings, audit log), except deleting. BD Managers and BD Associates also work enquiries. The portal's two original roles are kept as roles too: **Manager** (sessions, certificate designs, revoking certificates, settings, associates below them, enquiries) and **Counsellor** (enquiries; views students, sessions and certificates).
 
 - **Data scope** (per role): *own* records, *team* records (theirs and everyone who reports to them, directly or not, through **Reporting manager**: every associate assigned to a manager is in their team) or *all*. It is applied on the server, the same way everywhere (`src/scope.js`):
   - internship registrations (by BD Associate), with their payments, offer letters, insights and the export;
@@ -159,6 +160,7 @@ Admin also has every other module (students, enquiries, sessions, certificates, 
   A record outside the scope is "not found", and filtering for someone outside it finds nothing.
 - **Enquiry data → View** (`enquiries.view`) and **Participant (student) data → View** (`students.view`) decide who sees those people's details, wherever they appear. Every enquiry route needs the first (as well as its own action, export included), and so do a student's enquiries on their profile and the friends a participant referred. Every student master route needs the second, and so do the certificates (the participants' records: list, details, PDFs, exports), session participant exports and the overview's latest participants. Internship registrations are the BD team's own records and keep their own permission; the duplicate check when registering shows the matching student, as the registration form requires.
 - **Super Admin** always has every permission and sees everything; it cannot be restricted. At least one active Super Admin must remain.
+- **Only Super Admins delete records.** Every *delete* permission (registrations, payments, offer letter templates, students, enquiries, sessions, certificates, certificate designs: `SUPER_ADMIN_ONLY` in `src/permissions.js`) belongs to Super Admins alone. No role can be given one (the grid shows them as *Super Admin only*) and no per-associate override can grant one; a grant that reaches the database some other way is ignored. Migration 7 took them off the existing roles and overrides. Deactivating associates (`associates.delete`) is not a deletion and stays with those who manage associates.
 - **Custom roles** can be created (optionally starting from another role's permissions), renamed and deleted when no associate has them. The five roles of the requirements cannot be deleted.
 - **Per-associate overrides**: a Super Admin can grant or revoke single permissions for one associate on top of their role.
 - **No escalation**: an associate can give someone a role, or manage an associate, only if every permission of it is one they hold themselves. Only Super Admins manage Super Admins.
@@ -249,7 +251,7 @@ The **course master** (Settings → Course master) holds the course domains with
 | `GET /api/registrations/:id` · `PATCH /api/registrations/:id` · `DELETE /api/registrations/:id` | `registrations.view` · `.edit` · `.delete` | PATCH: `courseId`, `batchStartDate`, `fee`, `balanceDueDate`, `bdAssociateId`, `remarks`. DELETE removes its payments and offer letter. Logged. |
 | `POST /api/registrations/:id/payments` | `payments.create` | `{amount, paymentMode, transactionReference?, paidOn?, balanceDueDate?}` Emails the updated invoice; the response has `invoiceEmail` (`sent`\|`failed`\|`off`). |
 | `GET /api/registrations/:id/invoice/pdf` · `POST …/invoice/send` | `registrations.view` · and one of `payments.create`, `registrations.create`, `registrations.edit` | The up-to-date invoice (`?inline=1` to view); email it again |
-| `PATCH /api/registrations/:id/payments/:paymentId` · `DELETE …` | `registrations.edit` | Correct a payment, or remove a later one (the token payment stays). Logged. |
+| `PATCH /api/registrations/:id/payments/:paymentId` · `DELETE …` | `registrations.edit` · `payments.delete` (Super Admin) | Correct a payment, or remove a later one (the token payment stays). Logged. |
 | `GET /api/registrations/flags?status=` · `POST /api/registrations/flags/:id/resolve` | `students.edit` | Conflicts associates flagged |
 | `POST /api/registrations/flags` | `registrations.create` | `{name, phone, email, note?}` |
 | `GET /api/courses` · `POST /api/courses` · `PATCH /api/courses/:id` | `courses.view` (or registering) · `.create` · `.edit` | `{name, duration, active, offerTemplateId}` |
@@ -515,7 +517,7 @@ How it behaves on Vercel:
 - Public forms require explicit consent; the consent timestamp is stored. Staff confirm consent for phone and walk-in entries.
 - Only the fields listed above are stored. IP addresses and user agents are **not** stored. IPs are held in memory only, for up to 15 minutes, for rate limiting.
 - Access is limited to signed-in, active associates, and every permission (and the data scope) is enforced on the server. Changes are recorded in the audit log.
-- Associates with the delete permissions can permanently delete an enquiry and its notes, a certificate registration and its activity log, an internship registration with its payments and offer letter, or a whole student with everything linked to them, on request. Remember that the database's backups (TiDB Cloud keeps them for its retention period), the former SQLite file, and rows already copied to the Google Sheet still contain the data.
+- Super Admins (the only ones who can delete) can permanently delete an enquiry and its notes, a certificate registration and its activity log, an internship registration with its payments and offer letter, or a whole student with everything linked to them, on request. Remember that the database's backups (TiDB Cloud keeps them for its retention period), the former SQLite file, and rows already copied to the Google Sheet still contain the data.
 - Registrations and referred friends are copied to Google Sheets, and certificates, offer letters and associate invites are sent through your email provider; both are third-party processors. Keep the sheet's sharing Restricted to staff who need it (the Apps Script does not need link sharing), and keep the script's secret private.
 - Referred friends did not give their details themselves. The form asks the student to confirm each friend agreed; admissions should say who referred them when they call and delete the details of anyone who doesn't want to be contacted.
 - The public verification endpoint reveals only the name, session, issue date and status of a certificate. It never reveals email, phone or college.

@@ -3,7 +3,7 @@
 /**
  * Role-based access control. A permission is `<module>.<action>`; every API route checks one.
  * Roles live in the database (Roles & permissions screen); these are the modules and actions they choose
- * from, and the roles the database starts with.
+ * from, and the roles the database starts with. Deleting records is for Super Admins only (SUPER_ADMIN_ONLY).
  */
 
 const ACTIONS = [
@@ -27,7 +27,7 @@ const MODULES = [
       export: 'Download registrations as CSV',
     },
   },
-  { id: 'payments', label: 'Payments', actions: { create: 'Record later payments against an enrollment' } },
+  { id: 'payments', label: 'Payments', actions: { create: 'Record later payments against an enrollment', delete: 'Remove a recorded payment from the ledger' } },
   {
     id: 'offerLetters',
     label: 'Offer letters',
@@ -99,6 +99,12 @@ const MODULES = [
 const ALL_PERMISSIONS = MODULES.flatMap((m) => Object.keys(m.actions).map((a) => `${m.id}.${a}`));
 const isPermission = (p) => ALL_PERMISSIONS.includes(p);
 
+// Deleting records (students, payments, registrations, enquiries, sessions, certificates, templates) is reserved
+// for Super Admins: no role or per-associate grant gives it to anyone else. Associates are never deleted; their
+// "delete" (deactivate and reactivate) stays with the roles that manage associates.
+const SUPER_ADMIN_ONLY = ALL_PERMISSIONS.filter((p) => p.endsWith('.delete') && p !== 'associates.delete');
+const isSuperAdminOnly = (p) => SUPER_ADMIN_ONLY.includes(p);
+
 const SCOPES = [
   ['own', 'Own records'],
   ['team', 'Team records'],
@@ -132,10 +138,10 @@ const DEFAULT_ROLES = [
   {
     key: 'admin',
     name: 'Admin',
-    description: 'Runs the portal: registrations, payments, students, associates, templates. Cannot change roles or manage Super Admins.',
+    description: 'Runs the portal: registrations, payments, students, associates, templates. Cannot delete records, change roles or manage Super Admins.',
     scope: 'all',
     system: true,
-    permissions: except(ALL_PERMISSIONS, 'roles.view', 'roles.edit'),
+    permissions: except(ALL_PERMISSIONS, 'roles.view', 'roles.edit', ...SUPER_ADMIN_ONLY),
   },
   {
     key: 'bd_manager',
@@ -206,13 +212,18 @@ function effectivePermissions(roleKey, rolePermissions, overrides = {}) {
     if (granted) set.add(p);
     else set.delete(p);
   }
+  for (const p of SUPER_ADMIN_ONLY) set.delete(p);
   return set;
 }
 
 /** Modules and actions as the Roles & permissions screen shows them. */
 const catalogue = () => ({
   actions: ACTIONS.map(([id, label]) => ({ id, label })),
-  modules: MODULES.map((m) => ({ id: m.id, label: m.label, actions: Object.entries(m.actions).map(([id, description]) => ({ id, description })) })),
+  modules: MODULES.map((m) => ({
+    id: m.id,
+    label: m.label,
+    actions: Object.entries(m.actions).map(([id, description]) => ({ id, description, superAdminOnly: isSuperAdminOnly(`${m.id}.${id}`) })),
+  })),
   scopes: SCOPES.map(([id, label]) => ({ id, label })),
 });
 
@@ -220,8 +231,10 @@ module.exports = {
   ALL_PERMISSIONS,
   SCOPE_IDS,
   SUPER_ADMIN,
+  SUPER_ADMIN_ONLY,
   DEFAULT_ROLES,
   isPermission,
+  isSuperAdminOnly,
   effectivePermissions,
   catalogue,
 };

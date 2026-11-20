@@ -13,7 +13,7 @@ const daysFromToday = (n) => {
 };
 
 describe('staff API', () => {
-  let ctx, admin, counsellor, adminApi, counsellorApi, adminCookie;
+  let ctx, admin, counsellor, adminApi, counsellorApi, adminCookie, superApi;
 
   before(async () => {
     ctx = await startApp();
@@ -21,6 +21,8 @@ describe('staff API', () => {
     counsellor = await addUser(ctx.db, { name: 'Kiran Counsellor', email: 'kiran@sloka.test', role: 'counsellor', password: 'kiran-password-123' });
     adminCookie = (await login(ctx.base, admin.email, admin.password)).cookie;
     adminApi = client(ctx.base, adminCookie);
+    await addUser(ctx.db, { name: 'Sam Super', email: 'super@sloka.test', role: 'super_admin', password: 'super-password-123' });
+    superApi = client(ctx.base, (await login(ctx.base, 'super@sloka.test', 'super-password-123')).cookie);
     counsellorApi = client(ctx.base, (await login(ctx.base, counsellor.email, counsellor.password)).cookie);
   });
   after(() => ctx.close());
@@ -266,11 +268,12 @@ describe('staff API', () => {
     const id = await latestId();
     await adminApi.post(`/api/inquiries/${id}/notes`, { body: 'erasure requested' });
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM inquiry_notes WHERE inquiry_id = ?', [id])).n, 1);
-    const res = await adminApi.del(`/api/inquiries/${id}`);
+    assert.equal((await adminApi.del(`/api/inquiries/${id}`)).status, 403, 'only Super Admins delete');
+    const res = await superApi.del(`/api/inquiries/${id}`);
     assert.equal(res.status, 204);
     assert.equal((await adminApi.get(`/api/inquiries/${id}`)).status, 404);
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM inquiry_notes WHERE inquiry_id = ?', [id])).n, 0);
-    assert.equal((await adminApi.del(`/api/inquiries/${id}`)).status, 404);
+    assert.equal((await superApi.del(`/api/inquiries/${id}`)).status, 404);
   });
 
   test('change own password', async () => {

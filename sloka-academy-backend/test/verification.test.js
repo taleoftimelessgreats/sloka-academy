@@ -30,6 +30,8 @@ async function setup(options) {
   const manager = await addUser(ctx.db, { name: 'Mohan Manager', email: 'mohan@sloka.test', role: 'manager', password: 'mohan-password-123' });
   const counsellor = await addUser(ctx.db, { name: 'Kiran C', email: 'kiran@sloka.test', role: 'counsellor', password: 'kiran-password-123' });
   ctx.adminApi = client(ctx.base, (await login(ctx.base, admin.email, admin.password)).cookie);
+  await addUser(ctx.db, { name: 'Sam Super', email: 'super@sloka.test', role: 'super_admin', password: 'super-password-123' });
+  ctx.superApi = client(ctx.base, (await login(ctx.base, 'super@sloka.test', 'super-password-123')).cookie);
   ctx.managerApi = client(ctx.base, (await login(ctx.base, manager.email, manager.password)).cookie);
   ctx.counsellorApi = client(ctx.base, (await login(ctx.base, counsellor.email, counsellor.password)).cookie);
   let n = 0;
@@ -211,7 +213,7 @@ describe('profile matching and verification', () => {
     const r = await ctx.register(registration(await ctx.newSession(), { name: 'Sita D', email: 'sita@example.com', phone: '98111 00020', college: 'KMIT' }));
     assert.ok(r.data.verification);
     const sita = await ctx.student('email = ?', ['sita@example.com']);
-    assert.equal((await ctx.adminApi.del(`/api/students/${sita.id}`)).status, 204);
+    assert.equal((await ctx.superApi.del(`/api/students/${sita.id}`)).status, 204);
     const reg = await ctx.reg(r.data.certificate.id);
     assert.ok(reg, 'the waiting registration is kept');
     const own = await ctx.student('id = ?', [reg.student_id]);

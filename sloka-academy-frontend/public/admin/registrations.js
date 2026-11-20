@@ -765,20 +765,20 @@ function enrollmentCard(e, { reload, focus }) {
         }
       });
       actions.push(edit);
-      if (p.kind !== 'token') {
-        const del = h('button', { class: 'btn btn-sm btn-danger', type: 'button' }, 'Remove');
-        del.addEventListener('click', async () => {
-          if (!window.confirm(`Remove the payment of ${fmtMoney(p.amount)} on ${fmtDate(p.paidOn)}? This is recorded in the audit log.`)) return;
-          try {
-            await api('DELETE', `/api/registrations/${e.id}/payments/${p.id}`);
-            toast('Payment removed');
-            reload(e.id);
-          } catch (err) {
-            toast(fieldMessage(err), true);
-          }
-        });
-        actions.push(del);
-      }
+    }
+    if (can('payments.delete') && p.kind !== 'token') {
+      const del = h('button', { class: 'btn btn-sm btn-danger', type: 'button' }, 'Remove');
+      del.addEventListener('click', async () => {
+        if (!window.confirm(`Remove the payment of ${fmtMoney(p.amount)} on ${fmtDate(p.paidOn)}? This is recorded in the audit log.`)) return;
+        try {
+          await api('DELETE', `/api/registrations/${e.id}/payments/${p.id}`);
+          toast('Payment removed');
+          reload(e.id);
+        } catch (err) {
+          toast(fieldMessage(err), true);
+        }
+      });
+      actions.push(del);
     }
     return h(
       'tr',

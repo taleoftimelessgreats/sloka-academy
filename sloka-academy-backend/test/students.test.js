@@ -32,6 +32,8 @@ async function setup() {
   const admin = await addUser(ctx.db, { name: 'Anita Admin', email: 'admin@sloka.test', role: 'admin', password: 'admin-password-123' });
   const counsellor = await addUser(ctx.db, { name: 'Kiran C', email: 'kiran@sloka.test', role: 'counsellor', password: 'kiran-password-123' });
   ctx.adminApi = client(ctx.base, (await login(ctx.base, admin.email, admin.password)).cookie);
+  await addUser(ctx.db, { name: 'Sam Super', email: 'super@sloka.test', role: 'super_admin', password: 'super-password-123' });
+  ctx.superApi = client(ctx.base, (await login(ctx.base, 'super@sloka.test', 'super-password-123')).cookie);
   ctx.counsellorApi = client(ctx.base, (await login(ctx.base, counsellor.email, counsellor.password)).cookie);
   ctx.newSession = async (title) => {
     const r = await ctx.adminApi.post('/api/sessions', { title, sessionDate: yesterday(), venue: 'CVR College, Hyderabad', mode: 'in-person' });
@@ -135,7 +137,8 @@ describe('master student database', () => {
     const certIds = (await ctx.db.all('SELECT certificate_id FROM certificate_registrations WHERE student_id = ?', [id])).map((r) => r.certificate_id);
     assert.equal(certIds.length, 2);
     assert.equal((await ctx.counsellorApi.del(`/api/students/${id}`)).status, 403);
-    assert.equal((await ctx.adminApi.del(`/api/students/${id}`)).status, 204);
+    assert.equal((await ctx.adminApi.del(`/api/students/${id}`)).status, 403, 'only Super Admins delete');
+    assert.equal((await ctx.superApi.del(`/api/students/${id}`)).status, 204);
     assert.equal((await ctx.adminApi.get(`/api/students/${id}`)).status, 404);
     for (const certId of certIds) {
       const v = await fetch(`${ctx.base}/api/public/certificates/${certId}/verify`);
@@ -148,7 +151,7 @@ describe('master student database', () => {
     const s = await ctx.newSession('Careers in Finance');
     const r = await ctx.register(student(s.id, s.code, { name: 'Solo Student', email: 'solo@example.com', phone: '9555555555' }));
     const reg = (await ctx.db.get('SELECT id, student_id FROM certificate_registrations WHERE certificate_id = ?', [r.data.certificate.id]));
-    assert.equal((await ctx.adminApi.del(`/api/certificates/${reg.id}`)).status, 204);
+    assert.equal((await ctx.superApi.del(`/api/certificates/${reg.id}`)).status, 204);
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM students WHERE id = ?', [reg.student_id])).n, 0);
   });
 });
@@ -171,7 +174,7 @@ describe('Student IDs and duplicate profiles', () => {
     assert.equal(await codeOf('second@example.com'), `SLK-STU-${year}-00002`);
 
     const second = (await ctx.db.get("SELECT id FROM students WHERE email = 'second@example.com'")).id;
-    assert.equal((await ctx.adminApi.del(`/api/students/${second}`)).status, 204);
+    assert.equal((await ctx.superApi.del(`/api/students/${second}`)).status, 204);
     await postPublic(ctx.base, validInquiry({ email: 'third@example.com', phone: '9100000003' }));
     assert.equal(await codeOf('third@example.com'), `SLK-STU-${year}-00003`);
 
@@ -285,9 +288,9 @@ describe('database rules', () => {
       [['accounts', 'all', 1], ['admin', 'all', 1], ['bd_associate', 'own', 1], ['bd_manager', 'team', 1], ['counsellor', 'all', 0], ['manager', 'all', 0], ['super_admin', 'all', 1]],
     );
     const count = async (role) => (await t.db.get('SELECT COUNT(*) AS n FROM role_permissions WHERE role_key = ?', [role])).n;
-    const { ALL_PERMISSIONS } = require('../src/permissions');
+    const { ALL_PERMISSIONS, SUPER_ADMIN_ONLY } = require('../src/permissions');
     assert.equal(await count('super_admin'), ALL_PERMISSIONS.length);
-    assert.equal(await count('admin'), ALL_PERMISSIONS.length - 2, 'everything but roles');
+    assert.equal(await count('admin'), ALL_PERMISSIONS.length - 2 - SUPER_ADMIN_ONLY.length, 'everything but roles and deleting records');
     assert.ok((await t.db.get('SELECT COUNT(*) AS n FROM courses')).n >= 40, 'course master seeded from the website');
   });
 

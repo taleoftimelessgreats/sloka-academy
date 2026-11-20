@@ -107,12 +107,14 @@ async function upload(ctx, cookie, path, name, bytes, type = 'application/pdf') 
 }
 
 describe('placeholders in uploaded templates', () => {
-  let ctx, cookie, api, bdApi;
+  let ctx, cookie, api, bdApi, superApi;
   before(async () => {
     ctx = await startApp();
     const a = await addUser(ctx.db, { name: 'Anita Admin', email: 'admin@sloka.test', role: 'admin', password: 'admin-password-123' });
     cookie = (await login(ctx.base, a.email, a.password)).cookie;
     api = client(ctx.base, cookie);
+    await addUser(ctx.db, { name: 'Sam Super', email: 'super@sloka.test', role: 'super_admin', password: 'super-password-123' });
+    superApi = client(ctx.base, (await login(ctx.base, 'super@sloka.test', 'super-password-123')).cookie);
     const bd = await addUser(ctx.db, { name: 'Bhavana BD', email: 'bd@sloka.test', role: 'bd_associate', password: 'bd-password-123' });
     bdApi = client(ctx.base, (await login(ctx.base, bd.email, bd.password)).cookie);
   });
@@ -313,7 +315,7 @@ describe('placeholders in uploaded templates', () => {
     assert.ok((await api.get('/api/audit?entity=settings')).data.items.some((i) => i.summary === 'Changed the offer letter letterhead'));
 
     // Templates in use cannot be deleted; template changes are logged.
-    assert.equal((await api.del(`/api/offer-templates/${ctx.docTemplate.id}`)).status, 409, "a course and a letter use it");
+    assert.equal((await superApi.del(`/api/offer-templates/${ctx.docTemplate.id}`)).status, 409, "a course and a letter use it");
     const log = (await api.get('/api/audit?entity=offer_template')).data.items.map((i) => i.action);
     for (const action of ['upload', 'create', 'activate', 'set_default']) assert.ok(log.includes(action), action);
   });

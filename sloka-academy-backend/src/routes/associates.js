@@ -5,7 +5,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { validateAssociate } = require('../validation');
 const { validationError, HttpError, parseId, hasErrors } = require('../util');
-const { SUPER_ADMIN, isPermission, effectivePermissions } = require('../permissions');
+const { SUPER_ADMIN, isPermission, isSuperAdminOnly, effectivePermissions } = require('../permissions');
 const { diff } = require('../audit');
 
 const associateToApi = (u) => ({
@@ -261,6 +261,7 @@ function associatesRouter({ db, config, auth, audit, notifier }) {
       throw validationError({ overrides: 'Invalid permissions.' });
     }
     if (target.role === SUPER_ADMIN && Object.keys(raw).length) throw validationError({ overrides: 'Super Admins always have every permission.' });
+    if (Object.keys(raw).some(isSuperAdminOnly)) throw validationError({ overrides: 'Only Super Admins can delete records; delete permissions cannot be granted or revoked.' });
     await db.transaction(async () => {
       const before = Object.fromEntries(
         (await db.all('SELECT permission, granted FROM user_permission_overrides WHERE user_id = ? FOR UPDATE', [id])).map((o) => [o.permission, o.granted === 1]),

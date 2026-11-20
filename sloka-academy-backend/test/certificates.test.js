@@ -47,6 +47,8 @@ async function setup(options) {
   ctx.admin = admin;
   ctx.adminCookie = (await login(ctx.base, admin.email, admin.password)).cookie;
   ctx.adminApi = client(ctx.base, ctx.adminCookie);
+  await addUser(ctx.db, { name: 'Sam Super', email: 'super@sloka.test', role: 'super_admin', password: 'super-password-123' });
+  ctx.superApi = client(ctx.base, (await login(ctx.base, 'super@sloka.test', 'super-password-123')).cookie);
   ctx.counsellorApi = client(ctx.base, (await login(ctx.base, counsellor.email, counsellor.password)).cookie);
   ctx.newSession = async (extra = {}) => {
     const r = await ctx.adminApi.post('/api/sessions', {
@@ -356,11 +358,12 @@ describe('certificates: staff API', () => {
   });
 
   test('deleting a session with registrations is refused; empty sessions can be deleted', async () => {
-    const r = await ctx.adminApi.del(`/api/sessions/${session.id}`);
+    assert.equal((await ctx.adminApi.del(`/api/sessions/${session.id}`)).status, 403, 'only Super Admins delete');
+    const r = await ctx.superApi.del(`/api/sessions/${session.id}`);
     assert.equal(r.status, 409);
     assert.equal(r.data.error, 'has_registrations');
     const empty = await ctx.newSession({ title: 'Empty Session' });
-    assert.equal((await ctx.adminApi.del(`/api/sessions/${empty.id}`)).status, 204);
+    assert.equal((await ctx.superApi.del(`/api/sessions/${empty.id}`)).status, 204);
     assert.equal((await ctx.adminApi.get(`/api/sessions/${empty.id}`)).status, 404);
   });
 
@@ -388,7 +391,8 @@ describe('certificates: staff API', () => {
 
   test('admin can permanently delete a registration and its activity log', async () => {
     assert.ok((await ctx.db.get('SELECT COUNT(*) AS n FROM certificate_events WHERE registration_id = ?', [regId])).n > 0);
-    assert.equal((await ctx.adminApi.del(`/api/certificates/${regId}`)).status, 204);
+    assert.equal((await ctx.adminApi.del(`/api/certificates/${regId}`)).status, 403, 'only Super Admins delete');
+    assert.equal((await ctx.superApi.del(`/api/certificates/${regId}`)).status, 204);
     assert.equal((await ctx.adminApi.get(`/api/certificates/${regId}`)).status, 404);
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM certificate_events WHERE registration_id = ?', [regId])).n, 0);
   });

@@ -35,6 +35,7 @@ describe('internship registrations', () => {
     ctx = await startApp({ studentEmail: true, config: { emailDailyLimit: 100 } });
     const people = {
       admin: { name: 'Anita Admin', role: 'admin' },
+      owner: { name: 'Sam Super', role: 'super_admin' },
       lead: { name: 'Lakshmi Lead', role: 'bd_manager' },
       bhavana: { name: 'Bhavana BD', role: 'bd_associate' },
       ravi: { name: 'Ravi BD', role: 'bd_associate' },
@@ -204,8 +205,9 @@ describe('internship registrations', () => {
     assert.equal(fix.status, 200, JSON.stringify(fix.data));
     assert.equal(fix.data.registration.paymentStatus, 'partially-paid');
     const token = full.data.payments.find((p) => p.kind === 'token');
-    assert.equal((await apis.accounts.del(`/api/registrations/${id}/payments/${token.id}`)).status, 400, 'the token payment stays');
-    const removed = await apis.accounts.del(`/api/registrations/${id}/payments/${later.id}`);
+    assert.equal((await apis.owner.del(`/api/registrations/${id}/payments/${token.id}`)).status, 400, 'the token payment stays');
+    for (const who of ['accounts', 'admin']) assert.equal((await apis[who].del(`/api/registrations/${id}/payments/${later.id}`)).status, 403, 'only Super Admins delete payments');
+    const removed = await apis.owner.del(`/api/registrations/${id}/payments/${later.id}`);
     assert.equal(removed.data.registration.balance, 7999);
     const log = (await apis.admin.get('/api/audit?entity=payment')).data.items;
     assert.ok(log.some((i) => i.action === 'update' && i.changes.some((c) => c.field === 'Amount (₹)' && c.from === 7999 && c.to === 6999)));
@@ -447,9 +449,10 @@ describe('internship registrations', () => {
     assert.match(header, /Committed fee \(INR\),Paid \(INR\),Balance \(INR\),Balance due date,Payment status,Overdue,BD Associate,Offer letter ID/);
     assert.equal(rows.length, 4);
     assert.equal((await apis.accounts.del(`/api/registrations/${ctx.raviReg.id}`)).status, 403);
-    assert.equal((await apis.admin.del(`/api/registrations/${ctx.raviReg.id}`)).status, 204);
+    assert.equal((await apis.admin.del(`/api/registrations/${ctx.raviReg.id}`)).status, 403, 'only Super Admins delete');
+    assert.equal((await apis.owner.del(`/api/registrations/${ctx.raviReg.id}`)).status, 204);
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM payments WHERE enrollment_id = ?', [ctx.raviReg.id])).n, 0);
-    assert.equal((await apis.admin.del(`/api/students/${ctx.priya.student.id}`)).status, 204);
+    assert.equal((await apis.owner.del(`/api/students/${ctx.priya.student.id}`)).status, 204);
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM enrollments WHERE student_id = ?', [ctx.priya.student.id])).n, 0);
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM offer_letters')).n, 1, "Full Payer's stays");
     const log = (await apis.admin.get('/api/audit')).data.items;

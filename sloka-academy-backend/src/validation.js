@@ -2,7 +2,7 @@
 
 const C = require('./constants');
 const { isValidDateString } = require('./util');
-const { SCOPE_IDS: PERMISSION_SCOPES, isPermission } = require('./permissions');
+const { SCOPE_IDS: PERMISSION_SCOPES, isPermission, isSuperAdminOnly } = require('./permissions');
 
 // Control characters, bidi overrides and line/paragraph separators are replaced in single-line fields.
 const SINGLE_LINE_JUNK = /[\u0000-\u001F\u007F-\u009F\u2028\u2029\u202A-\u202E\u2066-\u2069]/g;
@@ -552,6 +552,8 @@ function validateRole(input, { partial = false } = {}) {
   if (!partial || body.permissions !== undefined) {
     if (!Array.isArray(body.permissions) || body.permissions.length > 200 || !body.permissions.every((p) => typeof p === 'string' && isPermission(p))) {
       errors.permissions = 'Invalid permissions.';
+    } else if (body.permissions.some(isSuperAdminOnly)) {
+      errors.permissions = 'Only Super Admins can delete records; no other role can be given a delete permission.';
     } else values.permissions = [...new Set(body.permissions)];
   }
   return { values, errors };

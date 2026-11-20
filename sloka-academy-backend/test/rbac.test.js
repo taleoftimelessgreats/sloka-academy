@@ -4,7 +4,7 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { startApp, addUser, login, client, referral, ALLOWED_ORIGIN } = require('./helpers');
 const { localDate } = require('../src/util');
-const { ALL_PERMISSIONS } = require('../src/permissions');
+const { ALL_PERMISSIONS, SUPER_ADMIN_ONLY } = require('../src/permissions');
 
 describe('roles & permissions', () => {
   let ctx, superApi, adminApi;
@@ -78,6 +78,45 @@ describe('roles & permissions', () => {
     assert.ok(all.items.every((i) => i.entity === 'role'));
     assert.equal((await adminApi.get('/api/audit?entity=nope')).status, 400);
     assert.equal((await adminApi.get('/api/audit?from=2001-01-01&to=2001-12-31')).data.total, 0);
+  });
+
+  test('only Super Admins delete records: no role or per-associate grant gives it to anyone else', async () => {
+    assert.deepEqual(SUPER_ADMIN_ONLY, [
+      'registrations.delete', 'payments.delete', 'offerTemplates.delete', 'students.delete', 'enquiries.delete', 'sessions.delete', 'certificates.delete', 'certTemplates.delete',
+    ]);
+    const grid = (await superApi.get('/api/roles')).data;
+    const flagged = grid.modules.flatMap((m) => m.actions.filter((a) => a.superAdminOnly).map((a) => `${m.id}.${a.id}`));
+    assert.deepEqual(flagged, SUPER_ADMIN_ONLY, 'the grid marks them');
+    for (const r of grid.roles.filter((x) => !x.locked)) assert.ok(!r.permissions.some((p) => SUPER_ADMIN_ONLY.includes(p)), r.key);
+
+    // Not on the Admin role, nor on anyone signed in who is not a Super Admin.
+    const admin = (await adminApi.get('/api/auth/me')).data.user;
+    assert.ok(!admin.permissions.some((p) => SUPER_ADMIN_ONLY.includes(p)));
+    assert.ok(admin.permissions.includes('associates.delete'), 'deactivating associates is not deleting a record');
+    const me = (await superApi.get('/api/auth/me')).data.user;
+    assert.ok(SUPER_ADMIN_ONLY.every((p) => me.permissions.includes(p)));
+
+    // A role cannot be given one, new or changed.
+    const made = await superApi.post('/api/roles', { name: 'Cleaner', scope: 'all', permissions: ['enquiries.view', 'enquiries.delete'] });
+    assert.equal(made.status, 400);
+    assert.match(made.data.fields.permissions, /Only Super Admins can delete records/);
+    assert.equal((await superApi.patch('/api/roles/admin', { permissions: [...grid.roles.find((x) => x.key === 'admin').permissions, 'students.delete'] })).status, 400);
+
+    // Nor an associate, by an override.
+    const u = await addUser(ctx.db, { name: 'Ola Override', email: 'ola@sloka.test', role: 'admin', password: 'ola-password-1234' });
+    const put = await superApi.put(`/api/associates/${u.id}/permissions`, { overrides: { 'payments.delete': true } });
+    assert.equal(put.status, 400);
+    assert.equal((await superApi.put(`/api/associates/${u.id}/permissions`, { overrides: { 'enquiries.export': false } })).status, 200, 'other overrides still work');
+
+    // Even a grant written straight into the database gives nothing.
+    await ctx.db.run("INSERT INTO role_permissions (role_key, permission) VALUES ('admin', 'enquiries.delete')");
+    await ctx.db.run("INSERT INTO user_permission_overrides (user_id, permission, granted) VALUES (?, 'students.delete', 1)", [u.id]);
+    const ola = client(ctx.base, (await login(ctx.base, u.email, u.password)).cookie);
+    const olaMe = (await ola.get('/api/auth/me')).data.user;
+    assert.ok(!olaMe.permissions.includes('enquiries.delete') && !olaMe.permissions.includes('students.delete'));
+    assert.equal((await ola.del('/api/students/999999')).status, 403);
+    assert.equal((await ola.del('/api/inquiries/999999')).status, 403);
+    await ctx.db.run("DELETE FROM role_permissions WHERE role_key = 'admin' AND permission = 'enquiries.delete'");
   });
 
   test('enquiry and participant data need their View permissions wherever they appear', async () => {

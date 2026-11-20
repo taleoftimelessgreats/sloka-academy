@@ -30,12 +30,15 @@ describe('certificate templates', () => {
   let cookie;
   let counsellorApi;
   let api;
+  let superApi;
   before(async () => {
     ctx = await startApp({ studentEmail: true });
     const admin = await addUser(ctx.db, { name: 'Anita Admin', email: 'admin@sloka.test', role: 'admin', password: 'admin-password-123' });
     const c = await addUser(ctx.db, { name: 'Kiran C', email: 'kiran@sloka.test', password: 'kiran-password-123' });
     cookie = (await login(ctx.base, admin.email, admin.password)).cookie;
     api = client(ctx.base, cookie);
+    await addUser(ctx.db, { name: 'Sam Super', email: 'super@sloka.test', role: 'super_admin', password: 'super-password-123' });
+    superApi = client(ctx.base, (await login(ctx.base, 'super@sloka.test', 'super-password-123')).cookie);
     counsellorApi = client(ctx.base, (await login(ctx.base, c.email, c.password)).cookie);
   });
   after(() => ctx.close());
@@ -169,7 +172,8 @@ describe('certificate templates', () => {
     assert.deepEqual(await pageSize(Buffer.from(await again.arrayBuffer())), [842, 595]);
 
     // Templates in use cannot be deleted, only archived; archived ones cannot be picked for a session.
-    const del = await api.del(`/api/templates/${landscape.id}`);
+    assert.equal((await api.del(`/api/templates/${landscape.id}`)).status, 403, 'only Super Admins delete');
+    const del = await superApi.del(`/api/templates/${landscape.id}`);
     assert.equal(del.status, 409);
     assert.equal((await api.patch(`/api/templates/${landscape.id}`, { archived: true })).data.template.archived, true);
     const pick = await api.post('/api/sessions', { title: 'Another session', sessionDate: day, mode: 'online', templateId: landscape.id });
@@ -189,6 +193,6 @@ describe('certificate templates', () => {
     assert.equal(ok.status, 200);
     assert.equal(ok.data.template.layout.fields.name.size, 40);
     assert.equal(ok.data.template.name, 'Spare v2');
-    assert.equal((await api.del(`/api/templates/${t.id}`)).status, 204);
+    assert.equal((await superApi.del(`/api/templates/${t.id}`)).status, 204);
   });
 });

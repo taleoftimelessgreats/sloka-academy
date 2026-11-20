@@ -9,6 +9,7 @@ describe('refer a friend (certificate registration)', () => {
   let ctx;
   let admin;
   let counsellor;
+  let owner;
   let session;
   before(async () => {
     ctx = await startApp();
@@ -16,6 +17,8 @@ describe('refer a friend (certificate registration)', () => {
     const c = await addUser(ctx.db, { name: 'Kiran C', email: 'kiran@sloka.test', password: 'kiran-password-123' });
     admin = client(ctx.base, (await login(ctx.base, a.email, a.password)).cookie);
     counsellor = client(ctx.base, (await login(ctx.base, c.email, c.password)).cookie);
+    await addUser(ctx.db, { name: 'Sam Super', email: 'super@sloka.test', role: 'super_admin', password: 'super-password-123' });
+    owner = client(ctx.base, (await login(ctx.base, 'super@sloka.test', 'super-password-123')).cookie);
     session = (await admin.post('/api/sessions', { title: 'Careers in Pharma', sessionDate: localDate(), mode: 'in-person', venue: 'Hall A' })).data.session;
   });
   after(() => ctx.close());
@@ -118,7 +121,8 @@ describe('refer a friend (certificate registration)', () => {
   });
 
   test('erasing the registration keeps the friends as enquiries but drops the link to the student', async () => {
-    assert.equal((await admin.del(`/api/certificates/${ctx.regId}`)).status, 204);
+    assert.equal((await admin.del(`/api/certificates/${ctx.regId}`)).status, 403, 'only Super Admins delete');
+    assert.equal((await owner.del(`/api/certificates/${ctx.regId}`)).status, 204);
     const list = await admin.get('/api/inquiries?source=referral');
     assert.equal(list.data.total, 2);
     assert.ok(list.data.items.every((i) => i.referredBy === null));

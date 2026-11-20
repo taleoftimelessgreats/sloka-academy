@@ -210,7 +210,7 @@ function registrationsRouter({ db, auth, registrations, offerLetters, invoices }
     res.json({ registration, payments: await registrations.payments(id) });
   });
 
-  router.delete('/:id/payments/:paymentId', may('registrations.edit'), async (req, res) => {
+  router.delete('/:id/payments/:paymentId', may('payments.delete'), async (req, res) => {
     const id = parseId(req.params.id);
     await load(req, id);
     const registration = await registrations.removePayment(id, parseId(req.params.paymentId), req.user.id);

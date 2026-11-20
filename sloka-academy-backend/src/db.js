@@ -2,7 +2,7 @@
 
 const { AsyncLocalStorage } = require('node:async_hooks');
 const mysql = require('mysql2/promise');
-const { DEFAULT_ROLES } = require('./permissions');
+const { DEFAULT_ROLES, SUPER_ADMIN_ONLY } = require('./permissions');
 
 // utf8mb4_general_ci makes comparisons, LIKE searches and unique keys case-insensitive (TiDB's own
 // default, utf8mb4_bin, is case-sensitive). AUTO_ID_CACHE=1 keeps TiDB's auto-increment ids consecutive;
@@ -499,6 +499,21 @@ const MIGRATIONS = [
       `ALTER TABLE enrollments ADD COLUMN IF NOT EXISTS invoice_sent_at ${TS}`,
       'CREATE UNIQUE INDEX IF NOT EXISTS uq_enrollments_invoice ON enrollments (invoice_code)',
     ],
+  },
+  {
+    // Only Super Admins delete records: take every delete permission (but deactivating associates) off the other
+    // roles and out of per-associate overrides. permissions.js keeps it that way.
+    version: 7,
+    statements: [],
+    async up(db) {
+      const marks = SUPER_ADMIN_ONLY.map(() => '?').join(', ');
+      await db.run(`DELETE FROM role_permissions WHERE permission IN (${marks}) AND role_key <> 'super_admin'`, SUPER_ADMIN_ONLY);
+      await db.run(`DELETE FROM user_permission_overrides WHERE permission IN (${marks})`, SUPER_ADMIN_ONLY);
+      await db.run("UPDATE roles SET description = ? WHERE role_key = 'admin' AND description = ?", [
+        DEFAULT_ROLES.find((r) => r.key === 'admin').description,
+        'Runs the portal: registrations, payments, students, associates, templates. Cannot change roles or manage Super Admins.',
+      ]);
+    },
   },
 ];
 

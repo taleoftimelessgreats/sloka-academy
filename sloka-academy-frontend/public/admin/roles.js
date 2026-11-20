@@ -72,8 +72,18 @@ export async function viewRoles(stale) {
         h(
           'tr',
           null,
-          h('th', { class: 'sticky-col action', scope: 'row', title: act.description }, actionLabel, h('span', { class: 'sub' }, act.description)),
+          h(
+            'th',
+            { class: 'sticky-col action', scope: 'row', title: act.description },
+            actionLabel,
+            act.superAdminOnly ? h('span', { class: 'badge' }, 'Super Admin only') : null,
+            h('span', { class: 'sub' }, act.description),
+          ),
           data.roles.map((r) => {
+            // Deleting records is reserved for Super Admins: no other role can be given it.
+            if (act.superAdminOnly && !r.locked) {
+              return h('td', { class: 'check-cell', title: 'Only Super Admins can delete records' }, h('input', { type: 'checkbox', disabled: true, 'aria-label': `${r.name}: ${m.label} ${actionLabel} (Super Admin only)` }));
+            }
             const box = h('input', { type: 'checkbox', checked: draft[r.key].permissions.has(p), disabled: !editable || r.locked, 'aria-label': `${r.name}: ${m.label} ${actionLabel}` });
             box.addEventListener('change', () => {
               if (box.checked) draft[r.key].permissions.add(p);
