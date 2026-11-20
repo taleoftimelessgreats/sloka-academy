@@ -57,7 +57,6 @@ describe('internship registrations', () => {
   const courseId = (name) => courses.find((c) => c.name === name).id;
   const enrollment = (extra = {}) => ({
     courseId: courseId('Data Science'),
-    batchStartDate: day(14),
     fee: '14,999',
     tokenAmount: 2000,
     paymentMode: 'upi',
@@ -81,7 +80,7 @@ describe('internship registrations', () => {
     courses = (await apis.bhavana.get('/api/courses')).data.courses;
   });
 
-  test('validations: mobile and email, token > ₹0 and ≤ fee, due date while a balance remains and not before registration', async () => {
+  test('validations: mobile and email, token > ₹0 and ≤ fee, the balance due date always and not before registration', async () => {
     const cases = [
       [{ student: student({ phone: '', email: 'nope' }) }, ['student.phone', 'student.email']],
       [{ enrollment: enrollment({ tokenAmount: 0 }) }, ['enrollment.tokenAmount']],
@@ -97,10 +96,17 @@ describe('internship registrations', () => {
       for (const k of keys) assert.ok(r.data.fields[k], `${k} for ${JSON.stringify(body)}: ${JSON.stringify(r.data.fields)}`);
     }
     assert.equal((await ctx.db.get('SELECT COUNT(*) AS n FROM enrollments')).n, 0);
-    // Fully paid at registration: no due date needed.
-    const full = await register(apis.ravi, { student: student({ name: 'Full Payer', phone: '9000011111', email: 'full@example.com' }), enrollment: enrollment({ fee: 5000, tokenAmount: 5000, balanceDueDate: '' }) });
+    // The BD always enters the balance due date, even when the fee is paid in full at registration.
+    const fullPayer = { student: student({ name: 'Full Payer', phone: '9000011111', email: 'full@example.com' }) };
+    const noDate = await register(apis.ravi, { ...fullPayer, enrollment: enrollment({ fee: 5000, tokenAmount: 5000, balanceDueDate: '' }) });
+    assert.equal(noDate.status, 400);
+    assert.equal(noDate.data.fields['enrollment.balanceDueDate'], 'Balance due date is required.');
+    // No batch start date is asked for (it is entered when the offer letter is issued); one sent anyway is ignored.
+    const full = await register(apis.ravi, { ...fullPayer, enrollment: enrollment({ fee: 5000, tokenAmount: 5000, balanceDueDate: day(0), batchStartDate: day(9) }) });
     assert.equal(full.status, 201, JSON.stringify(full.data));
     assert.equal(full.data.registration.paymentStatus, 'fully-paid');
+    assert.equal(full.data.registration.batchStartDate, null);
+    assert.equal(full.data.registration.internshipStartDate, null);
   });
 
   test('a new student: master record, enrollment, token payment, slot confirmed; no offer letter until fully paid', async () => {
@@ -360,6 +366,7 @@ describe('internship registrations', () => {
     assert.equal(again.offerLetterId, letter.offerLetterId);
     assert.equal(again.internshipStartDate, day(12));
     assert.deepEqual(again.events.map((e) => e.type), ['regenerated', 'generated']);
+    assert.equal((await apis.bhavana.get(`/api/registrations/${id}`)).data.registration.internshipStartDate, day(12), "the registration shows the letter's start date");
     assert.equal((await apis.accounts.post(`/api/registrations/${id}/offer-letter/send`, { startDate: day(12) })).status, 403, 'Accounts only view letters');
     // Sending with the same date emails the letter as it is.
     const sent = (await apis.bhavana.post(`/api/registrations/${id}/offer-letter/send`, { startDate: day(12) })).data.offerLetter;
@@ -446,7 +453,7 @@ describe('internship registrations', () => {
   test('registration CSV export and deletion (logged); erasing a student removes their registrations', async () => {
     const csv = (await apis.accounts.get('/api/registrations/export')).data;
     const [header, ...rows] = csv.replace(/^﻿/, '').trim().split('\r\n');
-    assert.match(header, /Committed fee \(INR\),Paid \(INR\),Balance \(INR\),Balance due date,Payment status,Overdue,BD Associate,Offer letter ID/);
+    assert.match(header, /Course domain,Internship start date,Committed fee \(INR\),Paid \(INR\),Balance \(INR\),Balance due date,Payment status,Overdue,BD Associate,Offer letter ID/);
     assert.equal(rows.length, 4);
     assert.equal((await apis.accounts.del(`/api/registrations/${ctx.raviReg.id}`)).status, 403);
     assert.equal((await apis.admin.del(`/api/registrations/${ctx.raviReg.id}`)).status, 403, 'only Super Admins delete');

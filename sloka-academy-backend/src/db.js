@@ -515,6 +515,12 @@ const MIGRATIONS = [
       ]);
     },
   },
+  {
+    // The registration form no longer asks for the batch start date: the internship start date is entered when the
+    // offer letter is issued. Older registrations keep the batch start date they were given.
+    version: 8,
+    statements: [`ALTER TABLE enrollments MODIFY COLUMN batch_start_date ${DAY} NULL`],
+  },
 ];
 
 // The website's internship domains (sloka-academy-frontend/src/data/domains.ts) when the course master was added.

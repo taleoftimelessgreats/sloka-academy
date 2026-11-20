@@ -267,7 +267,7 @@ describe('placeholders in uploaded templates', () => {
     const reg = async (courseId, phone, email) => {
       const r = await api.post('/api/registrations', {
         student: { name: 'Meena Iyer', phone, email, college: 'Osmania University' },
-        enrollment: { courseId, batchStartDate: localDate(), fee: 10000, tokenAmount: 10000, paymentMode: 'cash' },
+        enrollment: { courseId, fee: 10000, tokenAmount: 10000, paymentMode: 'cash', balanceDueDate: localDate() },
       });
       assert.equal(r.status, 201, JSON.stringify(r.data));
       return r.data.registration;

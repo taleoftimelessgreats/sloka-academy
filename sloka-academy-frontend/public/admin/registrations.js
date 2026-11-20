@@ -41,6 +41,9 @@ const policyNote = () => h('p', { class: 'muted small policy-note' }, h('strong'
 const OFFER_STATUS = { generated: 'Generated', sent: 'Sent', failed: 'Failed' };
 const offerBadge = (status) => h('span', { class: 'badge', 'data-status': `offer-${status}` }, OFFER_STATUS[status] || status);
 
+// The internship start date: from the offer letter, or the batch start date older registrations were given.
+const startDate = (e) => e.internshipStartDate || e.batchStartDate;
+
 /**
  * Issue the offer letter of a fully paid registration: the internship start date is asked for every time (it is
  * printed on the letter). mode 'send' emails it (when email works), 'regenerate' rebuilds it. Resolves to the
@@ -56,6 +59,7 @@ function offerLetterDialog(e, letter, mode) {
       resolve(value);
     };
     const start = h('input', { type: 'date', name: 'startDate', required: true, min: e.registrationDate, value: (letter && letter.internshipStartDate) || '' });
+    // Registrations from before the form stopped asking for it may have a batch start date to offer.
     const useBatch = e.batchStartDate && e.batchStartDate >= e.registrationDate
       ? h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { start.value = e.batchStartDate; start.focus(); } }, `Use the batch start date (${fmtDate(e.batchStartDate)})`)
       : null;
@@ -258,7 +262,7 @@ export async function viewRegistrations(params, stale) {
         h('span', { class: 'sub mono' }, e.student.studentCode || ''),
         h('span', { class: 'sub' }, e.student.phone || ''),
       ),
-      td('Course', e.course.name, h('span', { class: 'sub' }, `Starts ${fmtDate(e.batchStartDate)}`)),
+      td('Course', e.course.name, startDate(e) ? h('span', { class: 'sub' }, `Starts ${fmtDate(startDate(e))}`) : null),
       td('Fee', h('span', { class: 'nowrap' }, fmtMoney(e.fee)), h('span', { class: 'sub' }, `Paid ${fmtMoney(e.paid)}`)),
       td('Balance', h('span', { class: e.balance > 0 ? 'nowrap strong' : 'nowrap muted' }, fmtMoney(e.balance))),
       td('Due', e.balanceDueDate && e.balance > 0 ? h('span', { class: e.overdue ? 'nowrap fu-overdue' : 'nowrap' }, fmtDate(e.balanceDueDate)) : h('span', { class: 'muted' }, '—')),
@@ -495,13 +499,12 @@ export async function viewRegistrationForm(stale) {
   // ---- enrollment
   const en = {
     courseId: selectEl('enrollment.courseId', courses.map((c) => ({ id: c.id, label: `${c.name} (${c.duration})` })), '', { empty: 'Select the course domain' }),
-    batchStartDate: h('input', { name: 'enrollment.batchStartDate', type: 'date', required: true }),
     fee: h('input', { name: 'enrollment.fee', inputmode: 'decimal', required: true, placeholder: '₹', autocomplete: 'off' }),
     tokenAmount: h('input', { name: 'enrollment.tokenAmount', inputmode: 'decimal', required: true, placeholder: '₹', autocomplete: 'off' }),
     paymentMode: selectEl('enrollment.paymentMode', meta.paymentModes, '', { empty: 'Select' }),
     transactionReference: h('input', { name: 'enrollment.transactionReference', maxlength: '100', placeholder: 'UTR / transaction ID', autocomplete: 'off' }),
     paidOn: h('input', { name: 'enrollment.paidOn', type: 'date', value: today(), max: today() }),
-    balanceDueDate: h('input', { name: 'enrollment.balanceDueDate', type: 'date', min: today() }),
+    balanceDueDate: h('input', { name: 'enrollment.balanceDueDate', type: 'date', min: today(), required: true }),
     remarks: h('textarea', { name: 'enrollment.remarks', rows: '3', maxlength: '2000' }),
   };
   const mayAssign = can('registrations.edit');
@@ -524,7 +527,6 @@ export async function viewRegistrationForm(stale) {
     const balance = Math.round((fee - token) * 100) / 100;
     balanceOut.textContent = balance < 0 ? 'Token is more than the fee' : fmtMoney(balance);
     balanceOut.classList.toggle('bad', balance < 0);
-    en.balanceDueDate.required = balance > 0;
   };
   en.fee.addEventListener('input', updateBalance);
   en.tokenAmount.addEventListener('input', updateBalance);
@@ -621,21 +623,20 @@ export async function viewRegistrationForm(stale) {
         'div',
         { class: 'form-grid' },
         field('Course domain', en.courseId, { required: true }),
-        field('Batch / internship start date', en.batchStartDate, { required: true }),
         field('Committed program fee (₹)', en.fee, { required: true, hint: 'As negotiated with the student.' }),
         field('Registration (token) amount paid (₹)', en.tokenAmount, { required: true }),
         field('Payment mode', en.paymentMode, { required: true }),
         field('Transaction reference', en.transactionReference),
         field('Paid on', en.paidOn),
         h('div', { class: 'field' }, h('span', { class: 'label' }, 'Balance due'), balanceOut, h('small', { class: 'hint' }, 'Committed fee − total paid.')),
-        field('Balance due date', en.balanceDueDate, { hint: 'Required while a balance remains.' }),
+        field('Balance due date', en.balanceDueDate, { required: true, hint: 'When the balance is to be paid.' }),
         mayAssign
           ? field('BD Associate', bdSelect)
           : h('div', { class: 'field' }, h('span', { class: 'label' }, 'BD Associate'), h('output', { class: 'readonly' }, state.me.name)),
         field('Remarks', en.remarks, { full: true }),
       ),
       policyNote(),
-      h('p', { class: 'muted small' }, 'The student is emailed an invoice now and an updated one after every payment.', can('offerLetters.view') ? ' The offer letter is issued from their profile once the fee is fully paid.' : ''),
+      h('p', { class: 'muted small' }, 'The student is emailed an invoice now and an updated one after every payment.', can('offerLetters.view') ? ' The offer letter is issued from their profile once the fee is fully paid; the internship start date is entered then.' : ''),
     ),
     h('p', { class: 'form-error', role: 'alert' }),
     h('div', { class: 'form-actions' }, submit, h('a', { class: 'btn btn-ghost', href: '#/registrations' }, 'Cancel')),
@@ -688,8 +689,8 @@ function enrollmentCard(e, { reload, focus }) {
   const info = h(
     'dl',
     { class: 'info' },
-    h('dt', null, 'Batch / start date'),
-    h('dd', null, fmtDate(e.batchStartDate)),
+    h('dt', null, 'Internship start date'),
+    h('dd', null, startDate(e) ? fmtDate(startDate(e)) : h('span', { class: 'muted' }, 'Entered when the offer letter is issued')),
     h('dt', null, 'Committed fee'),
     h('dd', null, fmtMoney(e.fee)),
     h('dt', null, 'Paid'),
@@ -711,7 +712,6 @@ function enrollmentCard(e, { reload, focus }) {
     const ed = {
       fee: h('input', { name: 'fee', inputmode: 'decimal', value: String(e.fee) }),
       balanceDueDate: h('input', { name: 'balanceDueDate', type: 'date', value: e.balanceDueDate || '' }),
-      batchStartDate: h('input', { name: 'batchStartDate', type: 'date', value: e.batchStartDate }),
       bdAssociateId: selectEl('bdAssociateId', staffOptions(e.bdAssociate && e.bdAssociate.id), e.bdAssociate ? e.bdAssociate.id : ''),
       remarks: h('textarea', { name: 'remarks', rows: '2', maxlength: '2000' }, e.remarks || ''),
     };
@@ -723,7 +723,6 @@ function enrollmentCard(e, { reload, focus }) {
         { class: 'form-grid' },
         field('Committed fee (₹)', ed.fee),
         field('Balance due date', ed.balanceDueDate),
-        field('Batch / start date', ed.batchStartDate),
         field('BD Associate', ed.bdAssociateId),
         field('Remarks', ed.remarks, { full: true }),
       ),
@@ -736,7 +735,6 @@ function enrollmentCard(e, { reload, focus }) {
         await api('PATCH', `/api/registrations/${e.id}`, {
           fee: ed.fee.value,
           balanceDueDate: ed.balanceDueDate.value || null,
-          batchStartDate: ed.batchStartDate.value,
           bdAssociateId: Number(ed.bdAssociateId.value),
           remarks: ed.remarks.value,
         });

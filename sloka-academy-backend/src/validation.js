@@ -490,21 +490,23 @@ function validateRegistrationStudent(input) {
 
 const ENROLLMENT_FIELDS = {
   courseId: recordId('Course domain'),
-  batchStartDate: { label: 'Batch / internship start date', check: date, requiredMsg: 'Batch / internship start date is required.' },
   fee: { label: 'Committed program fee', check: rupees, requiredMsg: 'Committed program fee is required.' },
   tokenAmount: { label: 'Registration (token) amount', check: rupees, requiredMsg: 'Registration (token) amount is required.' },
   paymentMode: { label: 'Payment mode', check: oneOf(C.PAYMENT_MODE_IDS, 'Choose a payment mode.'), requiredMsg: 'Choose a payment mode.' },
   transactionReference: { label: 'Transaction reference', check: text({ max: 100 }) },
   paidOn: { label: 'Paid on', check: date },
-  balanceDueDate: { label: 'Balance due date', check: date },
+  balanceDueDate: { label: 'Balance due date', check: date, requiredMsg: 'Balance due date is required.' },
   bdAssociateId: { label: 'BD Associate', check: userId },
   remarks: { label: 'Remarks', check: text({ max: 2000, multiline: true }) },
 };
 
-/** New registration (create) or a change to one (partial: course, batch, fee, due date, BD Associate, remarks). */
+/**
+ * New registration (create) or a change to one (partial: course, fee, due date, BD Associate, remarks). The BD enters
+ * the balance due date when registering; the internship start date is asked for when the offer letter is issued.
+ */
 function validateEnrollment(input, { partial = false } = {}) {
-  const keys = partial ? ['courseId', 'batchStartDate', 'fee', 'balanceDueDate', 'bdAssociateId', 'remarks'] : Object.keys(ENROLLMENT_FIELDS);
-  const required = partial ? ['courseId', 'batchStartDate', 'fee'] : ['courseId', 'batchStartDate', 'fee', 'tokenAmount', 'paymentMode'];
+  const keys = partial ? ['courseId', 'fee', 'balanceDueDate', 'bdAssociateId', 'remarks'] : Object.keys(ENROLLMENT_FIELDS);
+  const required = partial ? ['courseId', 'fee'] : ['courseId', 'fee', 'tokenAmount', 'paymentMode', 'balanceDueDate'];
   return run(asObject(input), Object.fromEntries(keys.map((k) => [k, { def: ENROLLMENT_FIELDS[k], required: required.includes(k) }])), { partial });
 }
 

@@ -72,7 +72,9 @@ function enrollmentToApi(e, today = localDate()) {
     id: e.id,
     student: { id: e.student_id, studentCode: e.student_code ?? null, name: e.student_name, phone: e.student_phone, email: e.student_email, college: e.student_college },
     course: { id: e.course_id, name: e.course_name, duration: e.course_duration },
-    batchStartDate: e.batch_start_date,
+    // Entered when the offer letter is issued. Registrations from before that kept a batch start date instead.
+    internshipStartDate: e.offer_start_date ?? null,
+    batchStartDate: e.batch_start_date ?? null,
     fee: rupees(e.fee_paise),
     paid: rupees(e.paid_paise),
     balance: rupees(balance),
@@ -94,7 +96,7 @@ function enrollmentToApi(e, today = localDate()) {
 const SELECT = `
   SELECT e.*, st.student_code, st.name AS student_name, st.phone AS student_phone, st.email AS student_email, st.college AS student_college,
     c.name AS course_name, c.duration AS course_duration, b.name AS bd_name, cb.name AS created_by_name,
-    l.offer_code, l.status AS offer_status
+    l.offer_code, l.status AS offer_status, l.internship_start_date AS offer_start_date
   FROM enrollments e
   JOIN students st ON st.id = e.student_id
   JOIN courses c ON c.id = e.course_id
@@ -365,10 +367,10 @@ function createRegistrationRepo(db, config, { offerLetters, audit } = {}) {
 
       const id = (
         await db.run(
-          `INSERT INTO enrollments (student_id, course_id, batch_start_date, fee_paise, paid_paise, payment_status, balance_due_date,
+          `INSERT INTO enrollments (student_id, course_id, fee_paise, paid_paise, payment_status, balance_due_date,
             bd_associate_id, registration_date, remarks, created_by, created_at, updated_at)
-          VALUES (?, ?, ?, ?, 0, 'slot-confirmed', ?, ?, ?, ?, ?, ?, ?)`,
-          [sid, v.courseId, v.batchStartDate, v.fee, v.balanceDueDate ?? null, bdAssociateId, today, v.remarks ?? null, actorId, t, t],
+          VALUES (?, ?, ?, 0, 'slot-confirmed', ?, ?, ?, ?, ?, ?, ?)`,
+          [sid, v.courseId, v.fee, v.balanceDueDate ?? null, bdAssociateId, today, v.remarks ?? null, actorId, t, t],
         )
       ).insertId;
       await db.run(
@@ -499,7 +501,7 @@ function createRegistrationRepo(db, config, { offerLetters, audit } = {}) {
     return { student: studentToApi(s), enrollments };
   }
 
-  const FIELD_LABELS = { courseId: 'Course domain', batchStartDate: 'Batch start date', fee: 'Committed fee (₹)', balanceDueDate: 'Balance due date', bdAssociateId: 'BD Associate', remarks: 'Remarks' };
+  const FIELD_LABELS = { courseId: 'Course domain', fee: 'Committed fee (₹)', balanceDueDate: 'Balance due date', bdAssociateId: 'BD Associate', remarks: 'Remarks' };
 
   /** Change an enrollment after submission (validated partial values). Throws RegistrationError. */
   function update(id, v, actorId) {
@@ -516,7 +518,7 @@ function createRegistrationRepo(db, config, { offerLetters, audit } = {}) {
         if (!course || course.active !== 1) errors.courseId = 'Choose an active course domain.';
       }
       if (Object.keys(errors).length) throw new RegistrationError(errors);
-      const cols = { courseId: 'course_id', batchStartDate: 'batch_start_date', fee: 'fee_paise', balanceDueDate: 'balance_due_date', bdAssociateId: 'bd_associate_id', remarks: 'remarks' };
+      const cols = { courseId: 'course_id', fee: 'fee_paise', balanceDueDate: 'balance_due_date', bdAssociateId: 'bd_associate_id', remarks: 'remarks' };
       const sets = [];
       const params = [];
       const changes = [];

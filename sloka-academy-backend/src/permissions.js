@@ -22,7 +22,7 @@ const MODULES = [
     actions: {
       view: 'See registered students, their enrollments and payment ledgers',
       create: 'Register students (check the student master, record the token amount)',
-      edit: 'Change fee, due date, batch, BD Associate and payments after submission',
+      edit: 'Change fee, due date, BD Associate and payments after submission',
       delete: 'Delete an enrollment with its payments and offer letter',
       export: 'Download registrations as CSV',
     },

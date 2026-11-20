@@ -41,7 +41,7 @@ describe('team data scope: registrations, enquiries, students, associate filters
     const register = async (name, phone, bd, fee, token) => {
       const r = await apis.boss.post('/api/registrations', {
         student: { name, phone, email: `${phone}@example.com`, college: 'JNTU' },
-        enrollment: { courseId, batchStartDate: day(10), fee, tokenAmount: token, paymentMode: 'upi', balanceDueDate: fee > token ? day(20) : '', bdAssociateId: ids[bd] },
+        enrollment: { courseId, fee, tokenAmount: token, paymentMode: 'upi', balanceDueDate: day(20), bdAssociateId: ids[bd] },
       });
       assert.equal(r.status, 201, JSON.stringify(r.data));
       return r.data.registration;

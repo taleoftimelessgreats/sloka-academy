@@ -62,13 +62,13 @@ function registrationsRouter({ db, auth, registrations, offerLetters, invoices }
   router.get('/export', may('registrations.export'), async (req, res) => {
     const rows = await registrations.exportRows(await filtersOrThrow(req));
     const header = [
-      'Registration date', 'Student ID', 'Name', 'Mobile', 'Email', 'College', 'Course domain', 'Batch start date',
+      'Registration date', 'Student ID', 'Name', 'Mobile', 'Email', 'College', 'Course domain', 'Internship start date',
       'Committed fee (INR)', 'Paid (INR)', 'Balance (INR)', 'Balance due date', 'Payment status', 'Overdue', 'BD Associate',
       'Offer letter ID', 'Offer letter status', 'Remarks',
     ];
     const data = rows.map((e) => [
       e.registrationDate, e.student.studentCode, e.student.name, nationalPhone(e.student.phone), e.student.email, e.student.college,
-      e.course.name, e.batchStartDate, e.fee, e.paid, e.balance, e.balanceDueDate, C.label('paymentStatus', e.paymentStatus),
+      e.course.name, e.internshipStartDate || e.batchStartDate, e.fee, e.paid, e.balance, e.balanceDueDate, C.label('paymentStatus', e.paymentStatus),
       e.overdue ? 'Yes' : '', e.bdAssociate ? e.bdAssociate.name : '', e.offerLetter ? e.offerLetter.offerLetterId : '',
       e.offerLetter ? OFFER_STATUS[e.offerLetter.status] : '', e.remarks,
     ]);
@@ -165,7 +165,7 @@ function registrationsRouter({ db, auth, registrations, offerLetters, invoices }
     res.json({ registration, payments: await registrations.payments(id) });
   });
 
-  // Change fee, due date, batch, course, BD Associate or remarks after submission (logged).
+  // Change fee, due date, course, BD Associate or remarks after submission (logged).
   router.patch('/:id', may('registrations.edit'), async (req, res) => {
     const id = parseId(req.params.id);
     await load(req, id);
