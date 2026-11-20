@@ -163,7 +163,7 @@ export const policyLinks = [
 
 /**
  * The payment policy, word for word wherever payments are mentioned (the same clauses are printed on invoices,
- * offer letters and emails: sloka-academy-backend/src/constants.js PAYMENT_POLICY).
+ * the invoice emails and the portal's payment forms: sloka-academy-backend/src/constants.js PAYMENT_POLICY).
  */
 export const paymentPolicy = ["All payments are non-refundable.", "Payments are collected exclusively for training purposes."] as const;
 

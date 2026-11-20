@@ -435,9 +435,10 @@ describe('internship registrations', () => {
     assert.equal((await apis.ravi.get(`/api/registrations/${other.id}/invoice/pdf`)).status, 200);
     const fresh = (await apis.ravi.get(`/api/registrations/${other.id}`)).data.registration.invoice.invoiceNumber;
     assert.notEqual(fresh, other.invoice.invoiceNumber);
-    // The policy travels with the labels the portal loads, and with the offer letter email.
+    // The policy travels with the labels the portal loads; it is on invoices, not in the offer letter email.
     assert.deepEqual((await apis.bhavana.get('/api/meta')).data.paymentPolicy, ['All payments are non-refundable.', 'Payments are collected exclusively for training purposes.']);
-    assert.ok(ctx.outbox.find((m) => m.subject.includes('offer letter')).text.includes('All payments are non-refundable.'));
+    const offerMail = ctx.outbox.find((m) => m.subject.includes('offer letter')).text;
+    assert.ok(!offerMail.includes('non-refundable') && !offerMail.includes('exclusively for training'));
   });
 
   test('registration CSV export and deletion (logged); erasing a student removes their registrations', async () => {

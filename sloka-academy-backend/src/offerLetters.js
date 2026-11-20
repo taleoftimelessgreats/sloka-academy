@@ -5,7 +5,6 @@ const { longDate } = require('./certificatePdf');
 const { isWinAnsi } = require('./validation');
 const { toMappings, validateMappings, extractPlaceholders } = require('./placeholders');
 const { localDate, isValidDateString, HttpError, validationError } = require('./util');
-const { PAYMENT_POLICY } = require('./constants');
 
 /**
  * Internship offer letters: one per enrollment, issued once the fee is fully paid, with the internship start date
@@ -57,7 +56,7 @@ Throughout the internship you will work on a structured project assigned by your
 
 ## Terms of this offer
 
-This is an **unpaid internship**: no stipend, salary or other remuneration is payable. **${PAYMENT_POLICY.join(' ')}** During the internship you are expected to follow the academy's guidelines, meet the timelines agreed with your mentor, and keep confidential any project material shared with you.
+This is an **unpaid internship**: no stipend, salary or other remuneration is payable. During the internship you are expected to follow the academy's guidelines, meet the timelines agreed with your mentor, and keep confidential any project material shared with you.
 
 Please confirm your acceptance of this offer by writing to **{{hr_email}}**, quoting the reference number above.
 
@@ -459,7 +458,6 @@ function createOfferLetters({ db, config, templates, settings, notifier }) {
         hrEmail: values.hr_email || (await letterheadInfo()).email,
         signatory: values.signatory_name,
         designation: values.signatory_designation,
-        policy: PAYMENT_POLICY,
         termsUrl: `${String(config.siteUrl || '').replace(/\/+$/, '')}/terms/`,
         pdf,
       });

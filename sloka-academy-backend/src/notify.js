@@ -237,7 +237,6 @@ function createNotifier(config, { logger = console, quota = null, transport = nu
         '',
         'We look forward to welcoming you.',
         '',
-        ...(o.policy || []),
         ...(o.termsUrl ? [`Terms & Conditions: ${o.termsUrl}`] : []),
         '',
         'Warm regards,',

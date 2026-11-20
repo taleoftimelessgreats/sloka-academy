@@ -207,7 +207,7 @@ describe('placeholders in uploaded templates', () => {
     const list = (await api.get('/api/offer-templates')).data;
     assert.equal(list.builtInIsDefault, true);
     assert.match(list.builtIn.body, /\*\*unpaid internship\*\*/);
-    assert.match(list.builtIn.body, /All payments are non-refundable\. Payments are collected exclusively for training purposes\./);
+    assert.doesNotMatch(list.builtIn.body, /non-refundable|exclusively for training/); // the payment policy is on invoices, not offer letters
     assert.deepEqual(list.fields.map((f) => f.placeholder).slice(0, 3), ['{{student_name}}', '{{student_id}}', '{{course_domain}}']);
     assert.equal((await bdApi.get('/api/offer-templates')).status, 403);
 
